@@ -29,6 +29,7 @@ Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or
 | `--scan` | Re-analyze all skills (user + Claude Code + project dirs), rebuild registry |
 | `--validate` | Check every skill against the official spec (name=dirname, description 1-1024 chars, name format) |
 | `--route "<idea>"` | Score every skill against the idea text, return top-N + best skill-set |
+| `--route "<idea>" --set <name>` | Route within a specific skill-set only (filters results to members of that set) |
 | `--sets [--apply NAME]` | List skill-sets, or print the exact load order for one set |
 | `--plan "<request>"` | Route + best set -> phased execution plan with verification gates |
 | `--refs [--per-skill]` | Generate ref docs (central; `--per-skill` also copies into each skill dir) |
@@ -39,9 +40,13 @@ Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or
 | `--json` | Machine-readable output for the AI layer |
 | `--force` | Force a rescan / force re-loading always-on skills mid-session |
 | `--graph [--dot|--mmd]` | Emit a skill-relatedness graph (Jaccard over keywords; DOT or Mermaid) |
-| `--sets --new/--add/--remove` | Edit skill-sets: create custom sets, add/remove members (persisted to sets.custom.json) |
+| `--sets --new NAME --members a,b` | Create a custom skill-set (persisted to sets.custom.json) |
+| `--sets --add NAME:member` | Add a skill to a custom set |
+| `--sets --remove NAME:member` | Remove a skill from a custom set |
+| `--sets --delete NAME` | Delete a custom set (built-ins cannot be deleted) |
 | `--mcp add/remove/list` | Auto-register the skill-router MCP server in client configs — no manual config |
 | `--sync --init/--push/--pull` | Cloud-sync the skills tree to a git remote (backup + restore across machines) |
+| `--refresh` | Update all installed copies with the latest SKILL.md |
 | `--agents` | Generate AGENTS.md for the current project from the registry |
 | `--bundle` | Build a tarball + install.json for GitHub Pages (no-npm distribution) |
 
@@ -80,6 +85,114 @@ Named bundles so one word activates many skills. Full table in `references/skill
 | `ops` | Ship safely | ci-cd-and-automation, shipping-and-launch, observability-and-instrumentation |
 | `intelligence` | Understand the codebase | ix, understand, code-review-graph, knip |
 | `all` | Everything | all registered skills |
+
+## Routing Within a Set
+
+Use `--set <name>` to constrain routing to a specific skill-set. This is useful when you know which category of skills you need:
+
+```bash
+# Route within the 'build' set only
+skill-router route "implement user authentication" --set build
+
+# Route within the 'frontend' set only
+skill-router route "create a responsive dashboard" --set frontend
+```
+
+The `--set <name>` flag filters the results to only include skills that are members of the specified set. This is different from `--sets --apply NAME` which just prints the load order.
+
+## Custom Skill-Sets
+
+Create your own skill-sets for project-specific workflows. Custom sets are persisted to `sets.custom.json` in the registry directory.
+
+```bash
+# Create a new custom set
+skill-router sets --new my-project --members "brainstorming,spec-driven-development,incremental-implementation" --desc "My project workflow"
+
+# Add a skill to an existing set
+skill-router sets --add my-project:code-review-and-quality
+
+# Remove a skill from a set
+skill-router sets --remove my-project:code-review-and-quality
+
+# Delete a custom set
+skill-router sets --delete my-project
+```
+
+Custom sets appear with a `*` marker in the sets listing. Built-in sets cannot be deleted, but you can create copies with `--new` and modify those.
+
+## Project Configuration
+
+Each project can define its own defaults via a `skill-router.json` (or `.skill-router.json`) file in the project root. The config is loaded automatically and merged with CLI flags (CLI flags take precedence).
+
+### Config File Location
+
+The CLI walks up the directory tree from the current working directory to find a config file. This means you can put it in your project root and it will be found from any subdirectory.
+
+### Config File Format
+
+```json
+{
+  "registry": "./.skill-router/registry.json",
+  "dirs": ["./skills", "./.agents/skills"],
+  "defaultSet": "build",
+  "force": false
+}
+```
+
+### Config Options
+
+| Option | Description | Example |
+|---|---|---|---|
+| `registry` | Path to the registry directory (overrides default) | `"./.skill-router"` |
+| `dirs` | Comma-separated scan directories | `"./skills,./.agents/skills"` |
+| `defaultSet` | Default skill-set to use for routing | `"build"` |
+| `force` | Force rescan on every run | `true` |
+
+### Example: Project-Specific Workflow
+
+Create `skill-router.json` in your project root:
+
+```json
+{
+  "dirs": ["./.agents/skills", "./skills"],
+  "defaultSet": "build"
+}
+```
+
+Now `skill-router route "implement auth"` will automatically use the `build` set and scan your project's skill directories.
+
+### Environment Variable
+
+Set `SKILL_ROUTER_VERBOSE=1` to see which config file is being loaded:
+
+```bash
+SKILL_ROUTER_VERBOSE=1 skill-router route "implement auth"
+# Output: Using project config from: /path/to/project/skill-router.json
+```
+
+## Refreshing Installed Copies
+
+When you update the source `skill/SKILL.md` (e.g., to add new documentation), use `--refresh` to update all installed copies across your AI clients:
+
+```bash
+# Refresh all installed instances
+skill-router refresh
+
+# Refresh with verbose output
+SKILL_ROUTER_VERBOSE=1 skill-router refresh
+```
+
+This updates every installed instance with the latest SKILL.md without requiring you to remember which clients you installed to. The command:
+- Finds all installed instances (both user-level and project-level)
+- Overwrites them with the latest source
+- Preserves the original install mode (copy or link)
+- Verifies each update succeeded
+
+Use `--agent <ids>` to refresh only specific clients:
+
+```bash
+skill-router refresh --agent claude-code,cursor
+```
 
 ## The AI Layer (Your Judgment)
 

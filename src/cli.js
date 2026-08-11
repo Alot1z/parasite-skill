@@ -1,8 +1,8 @@
 // skill-router CLI — argument parsing, help, dispatch.
 import { LOGO } from "./logo.js";
-import { VERSION } from "./engine.js";
+import { VERSION, loadProjectConfig, mergeConfig } from "./engine.js";
 import * as commands from "./commands/index.js";
-import { CLIENTS, runInstall, runList, runRemove } from "./clients.js";
+import { CLIENTS, runInstall, runRefresh, runList, runRemove } from "./clients.js";
 import { runMcpAdd, runMcpRemove, runMcpList } from "./mcp-register.js";
 
 const HELP = `skill-router v${VERSION}
@@ -18,6 +18,8 @@ COMMANDS
   install   Install the skill-router skill into one or more AI clients
             (--copy | --link, --all | --agent <ids>, -g/--global | --project,
              --yes, --force)
+  refresh   Update all installed copies with the latest SKILL.md
+            (--all | --agent <ids>, --copy | --link)
   list      Show installed skill-router instances per client
   remove    Remove installed instances (--agent <ids>)
   scan      Re-analyze the whole skill ecosystem, rebuild registry
@@ -153,10 +155,18 @@ export async function run(argv) {
     return 0;
   }
 
-  const ctx = { ...flags, idea: arg, request: arg, file: rest[0] };
+  // Load project config and merge with CLI flags
+  const projectConfig = loadProjectConfig();
+  const ctx = { ...mergeConfig(projectConfig, flags), idea: arg, request: arg, file: rest[0] };
+  
+  // Log config source if verbose
+  if (projectConfig && process.env.SKILL_ROUTER_VERBOSE) {
+    console.error(`Using project config from: ${projectConfig._path}`);
+  }
 
   switch (cmd) {
     case "install": return await runInstall(ctx);
+    case "refresh": return await runRefresh(ctx);
     case "list": return runList();
     case "remove": return runRemove(ctx);
     case "scan": return commands.cmdScan(ctx);

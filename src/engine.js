@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { LANG_EXT, TAG_RULES } from "./data/tags.js";
 import { SETS as SETS_DATA } from "./data/sets.js";
 
@@ -327,4 +327,85 @@ export function bestSets(skills, scored, sets = SETS) {
       Math.round(scored.filter(([nm]) => members.includes(nm) && names.has(nm)).reduce((a, [, sc]) => a + sc, 0) * 100) / 100,
     ])
     .sort((a, b) => b[1] - a[1]);
+}
+
+// ---------------------------------------------------------------- project config
+
+// Load project-level config from skill-router.json in the current working
+// directory. This allows each project to define default sets, registry
+// location, scan dirs, and other settings.
+export function loadProjectConfig(startDir = process.cwd()) {
+  const configNames = ["skill-router.json", ".skill-router.json"];
+  let dir = startDir;
+  
+  // Walk up the directory tree to find a config file
+  while (dir !== dirname(dir)) {
+    for (const name of configNames) {
+      const configPath = join(dir, name);
+      if (existsSync(configPath)) {
+        try {
+          const raw = readFileSync(configPath, "utf-8");
+          const config = JSON.parse(raw);
+          return {
+            ...config,
+            _path: configPath,
+            _dir: dir,
+          };
+        } catch (err) {
+          console.error(`Warning: failed to parse ${configPath}: ${err.message}`);
+        }
+      }
+    }
+    dir = dirname(dir);
+  }
+  
+  return null;
+}
+
+// Merge project config with CLI flags. CLI flags take precedence.
+export function mergeConfig(projectConfig, cliFlags) {
+  if (!projectConfig) return cliFlags;
+  
+  const merged = { ...cliFlags };
+  
+  // Apply project defaults only if CLI didn't set them
+  if (projectConfig.registry && !cliFlags.registry) {
+    // Validate registry is a string
+    if (typeof projectConfig.registry === "string") {
+      merged.registry = projectConfig.registry;
+    } else {
+      console.error("Warning: invalid 'registry' in skill-router.json (expected string)");
+    }
+  }
+  
+  if (projectConfig.dirs && !cliFlags.dirs) {
+    // Handle both array and string formats for dirs
+    if (Array.isArray(projectConfig.dirs)) {
+      merged.dirs = projectConfig.dirs.join(",");
+    } else if (typeof projectConfig.dirs === "string") {
+      merged.dirs = projectConfig.dirs;
+    } else {
+      console.error("Warning: invalid 'dirs' in skill-router.json (expected string or array)");
+    }
+  }
+  
+  if (projectConfig.defaultSet && !cliFlags.set) {
+    // Validate defaultSet is a string
+    if (typeof projectConfig.defaultSet === "string") {
+      merged.set = projectConfig.defaultSet;
+    } else {
+      console.error("Warning: invalid 'defaultSet' in skill-router.json (expected string)");
+    }
+  }
+  
+  if (projectConfig.force !== undefined && !cliFlags.force) {
+    // Validate force is a boolean
+    if (typeof projectConfig.force === "boolean") {
+      merged.force = projectConfig.force;
+    } else {
+      console.error("Warning: invalid 'force' in skill-router.json (expected boolean)");
+    }
+  }
+  
+  return merged;
 }

@@ -247,3 +247,42 @@ export function runRemove(args) {
   console.log(`removed ${removed} instance(s)`);
   return 0;
 }
+
+export async function runRefresh(args) {
+  const source = skillSourceDir();
+  const scope = args.scope === "project" ? "project" : "user";
+  const mode = args.mode === "link" ? "link" : "copy";
+  
+  // Find all installed instances
+  const installed = [];
+  for (const c of CLIENTS) {
+    const dir = scope === "project" ? join(process.cwd(), c.project) : c.user;
+    const dest = join(dir, SKILL_NAME);
+    if (existsSync(dest)) {
+      installed.push({ ...c, dest });
+    }
+  }
+  
+  if (installed.length === 0) {
+    console.log("no installed instances found");
+    console.log("  run: skill-router install  (to install first)");
+    return 0;
+  }
+  
+  console.log(banner());
+  console.log(`  refreshing ${installed.length} installed instance(s)...`);
+  
+  let refreshed = 0;
+  for (const c of installed) {
+    const res = installOne(c.dest, mode, source, true); // force=true to overwrite
+    if (res.ok) {
+      refreshed++;
+      console.log(`  ${smallLogo()} ${c.label}: refreshed (${res.mode})`);
+    } else {
+      console.log(`  FAIL ${c.label}: ${res.error}`);
+    }
+  }
+  
+  console.log(`\nrefreshed ${refreshed}/${installed.length} instance(s)`);
+  return refreshed === installed.length ? 0 : 1;
+}
