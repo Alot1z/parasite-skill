@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadRegistry, registryDir, loadSets, saveCustomSets, SETS } from "../engine.js";
+import { loadRegistry, registryDir, loadSets, loadSetsWithProject, saveCustomSets, SETS } from "../engine.js";
 
 export function cmdSets(args) {
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);
   const installed = new Set(payload.skills.map((s) => s.name));
-  const sets = loadSets(reg);
+  const sets = loadSetsWithProject(reg, args.sets);
   const custom = currentCustom(reg);
   const builtin = new Set(Object.keys(SETS));
 
@@ -40,6 +40,10 @@ export function cmdSets(args) {
       console.error(`unknown set '${name}'. available: ${Object.keys(sets).join(", ")}`);
       return 1;
     }
+    if (sets[name].project) {
+      console.error(`'${name}' is defined in skill-router.json — edit the config file directly (project sets are not editable via the editor)`);
+      return 1;
+    }
     const target = custom[name] ?? { desc: sets[name].desc, members: [...sets[name].members] };
     if (!target.members.includes(member)) target.members.push(member);
     custom[name] = target;
@@ -53,6 +57,10 @@ export function cmdSets(args) {
     const [name, member] = String(args.remove).split(":");
     if (!name || !member) {
       console.error("usage: sets --remove NAME:member");
+      return 1;
+    }
+    if (sets[name]?.project) {
+      console.error(`'${name}' is defined in skill-router.json — edit the config file directly (project sets are not editable via the editor)`);
       return 1;
     }
     const target = custom[name] ?? { desc: sets[name]?.desc, members: [...(sets[name]?.members ?? [])] };
@@ -99,10 +107,12 @@ export function cmdSets(args) {
   // ---- view: all sets -------------------------------------------------------
   for (const [name, set] of Object.entries(sets)) {
     const present = set.members.filter((m) => installed.has(m)).length;
+    const projectMark = set.project ? " (project)" : "";
     const mark = builtin.has(name) ? "" : " *";
-    console.log(`${name.padEnd(14)} ${set.desc.padEnd(32)} ${present}/${set.members.length} installed${mark}`);
+    console.log(`${name.padEnd(14)} ${set.desc.padEnd(32)} ${present}/${set.members.length} installed${mark}${projectMark}`);
   }
   console.log("\n* = custom set (editable via --new/--add/--remove/--delete)");
+  console.log("(project) = defined in skill-router.json");
   return 0;
 }
 

@@ -37,6 +37,25 @@ export function saveCustomSets(reg, custom) {
   return f;
 }
 
+// Merge project-defined sets (from skill-router.json) over the registry sets.
+// A project can declare its own workflow sets without touching sets.custom.json
+// or the built-ins. Project sets are marked so listings can label them.
+export function loadSetsWithProject(reg, projectSets) {
+  const sets = { ...loadSets(reg) };
+  if (projectSets && typeof projectSets === "object") {
+    for (const [name, def] of Object.entries(projectSets)) {
+      if (def && typeof def === "object" && Array.isArray(def.members)) {
+        sets[name] = {
+          desc: typeof def.desc === "string" ? def.desc : "project set",
+          members: def.members.filter((m) => typeof m === "string"),
+          project: true,
+        };
+      }
+    }
+  }
+  return sets;
+}
+
 export const VERSION = "1.0.0";
 export const REGISTRY_NAME = ".skill-router";
 export const HOME = homedir();
@@ -404,6 +423,23 @@ export function mergeConfig(projectConfig, cliFlags) {
       merged.force = projectConfig.force;
     } else {
       console.error("Warning: invalid 'force' in skill-router.json (expected boolean)");
+    }
+  }
+  
+  // Project-defined skill-sets ride along on the ctx so sets/route/plan can
+  // overlay them. CLI flags cannot express sets, so no CLI-precedence rule.
+  if (projectConfig.sets !== undefined && projectConfig.sets !== null) {
+    if (typeof projectConfig.sets === "object" && !Array.isArray(projectConfig.sets)) {
+      const valid = {};
+      for (const [name, def] of Object.entries(projectConfig.sets)) {
+        if (def && typeof def === "object" && Array.isArray(def.members) && def.members.length) {
+          valid[name] = def;
+        }
+      }
+      if (Object.keys(valid).length) merged.sets = valid;
+      else console.error("Warning: 'sets' in skill-router.json has no valid {name: {members[]}} entries");
+    } else {
+      console.error("Warning: invalid 'sets' in skill-router.json (expected object of {name: {desc, members[]}})");
     }
   }
   

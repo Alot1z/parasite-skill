@@ -1,4 +1,4 @@
-import { loadRegistry, loadSets, registryDir, scoreIdea } from "../engine.js";
+import { loadRegistry, loadSetsWithProject, registryDir, scoreIdea } from "../engine.js";
 
 export function cmdRoute(args) {
   const reg = registryDir(args.registry);
@@ -7,7 +7,7 @@ export function cmdRoute(args) {
     console.error('missing idea text: skill-router route "<idea>" [--set <name>]');
     return 1;
   }
-  const allSets = loadSets(reg);
+  const allSets = loadSetsWithProject(reg, args.sets);
   const { scored, setScores } = scoreIdea(payload, args.idea, allSets);
   const top = scored.slice(0, Number.isFinite(args.top) && args.top > 0 ? args.top : 8);
   // --set <name>: constrain routing to one skill-set (values, not the boolean).

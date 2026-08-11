@@ -319,6 +319,35 @@ def best_set(registry: dict, scores: dict[str, float], sets: dict | None = None)
     return out
 
 
+def project_sets() -> dict:
+    """Merge skill-sets defined in the nearest skill-router.json over the
+    built-ins (Python tuple shape). Walks up from the current directory so a
+    project root config applies from any subdirectory."""
+    merged = dict(SETS)
+    cur = Path.cwd()
+    for _ in range(64):
+        for name in ("skill-router.json", ".skill-router.json"):
+            f = cur / name
+            if f.exists():
+                try:
+                    cfg = json.loads(f.read_text(encoding="utf-8"))
+                except Exception as e:
+                    # JS twin logs a warning and keeps walking up — same here.
+                    print(f"Warning: failed to parse {f}: {e}", file=sys.stderr)
+                    break
+                raw = cfg.get("sets") if isinstance(cfg, dict) else None
+                if isinstance(raw, dict):
+                    for sn, d in raw.items():
+                        if isinstance(d, dict) and isinstance(d.get("members"), list):
+                            merged[sn] = (str(d.get("desc", "project set")), [m for m in d["members"] if isinstance(m, str)])
+                return merged
+        nxt = cur.parent
+        if nxt == cur:
+            break
+        cur = nxt
+    return merged
+
+
 def fmt_path(p: Path) -> str:
     return p.as_posix()
 
@@ -354,8 +383,22 @@ def cmd_route(args) -> int:
     reg = registry_dir(args.registry)
     payload = load_registry(reg, args.dirs, args.force)
     scores = ids(payload, args.idea)
+    table = project_sets()
+    # --set <NAME>: constrain routing to one skill-set. Bare --set keeps the
+    # legacy boolean toggle (print the best set's load order).
+    if isinstance(args.set, str):
+        members = table.get(args.set, (None, []))[1]
+        if not members:
+            print(f"unknown skill-set: {args.set}", file=sys.stderr)
+            return 1
+        within = sorted((nm, sc) for nm, sc in scores.items() if nm in members)[: args.top]
+        print(f"idea: {args.idea!r}")
+        print(f"top skills within set '{args.set}':")
+        for name, score in within:
+            print(f"  {score:6.2f}  {name}")
+        return 0
     top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[: args.top]
-    sets = best_set(payload, scores)
+    sets = best_set(payload, scores, table)
     if args.json:
         print(json.dumps({"idea": args.idea, "scores": top, "sets": sets}, indent=2))
         return 0
@@ -369,7 +412,7 @@ def cmd_route(args) -> int:
     if args.set:
         print(f"\nload order for '{sets[0][0]}':")
         names = {s["name"] for s in payload["skills"]}
-        for i, m in enumerate(SETS[sets[0][0]][1], 1):
+        for i, m in enumerate(table[sets[0][0]][1], 1):
             print(f"  {i}. {m}" + ("" if m in names else "  (not installed)"))
     return 0
 
@@ -378,18 +421,19 @@ def cmd_sets(args) -> int:
     reg = registry_dir(args.registry)
     payload = load_registry(reg, args.dirs, args.force)
     names = {s["name"] for s in payload["skills"]}
+    table = project_sets()
     if args.apply:
-        if args.apply not in SETS:
-            print(f"unknown set '{args.apply}'. available: {', '.join(SETS)}", file=sys.stderr)
+        if args.apply not in table:
+            print(f"unknown set '{args.apply}'. available: {', '.join(table)}", file=sys.stderr)
             return 1
-        members = SETS[args.apply][1]
-        print(f"set '{args.apply}': {SETS[args.apply][0]}")
+        members = table[args.apply][1]
+        print(f"set '{args.apply}': {table[args.apply][0]}")
         for i, m in enumerate(members, 1):
             print(f"  {i}. {m}" + ("" if m in names else "  (not installed)"))
         print("\nalways-on prepend: tractatus-thinking, sequential-thinking")
         print("always-on append: verification-before-completion, code-review-and-quality")
         return 0
-    for set_name, (desc, members) in SETS.items():
+    for set_name, (desc, members) in table.items():
         present = [m for m in members if m in names]
         print(f"{set_name:14s} {desc:32s} {len(present)}/{len(members)} installed")
     return 0
@@ -528,8 +572,9 @@ def cmd_plan(args) -> int:
             "### ROUTE (top skills)", ""]
     for name, score in top:
         plan.append(f"- {name} (score {score})")
+    table = project_sets()
     plan += ["", f"### EXECUTE (skill-set: {best})", ""]
-    for m in SETS[best][1]:
+    for m in table.get(best, (None, []))[1]:
         plan.append(f"- load: {m}")
     plan += ["", "### BETWEEN tool calls", "- doubt-driven-development before non-trivial decisions",
              "- debug-thinking / debugging-and-error-recovery on failure",
@@ -674,7 +719,7 @@ def main() -> int:
     p_route = sub.add_parser("route", parents=[common], help="score skills for an idea")
     p_route.add_argument("idea")
     p_route.add_argument("--top", type=int, default=8)
-    p_route.add_argument("--set", action="store_true", help="also print load order for the best set")
+    p_route.add_argument("--set", nargs="?", const=True, default=None, help="route within this skill-set; bare --set prints the best set load order")
     p_route.set_defaults(func=cmd_route)
 
     p_sets = sub.add_parser("sets", parents=[common], help="list skill-sets or print load order")

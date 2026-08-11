@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { VERSION, loadRegistry, loadSets, registryDir, scoreIdea } from "../engine.js";
+import { VERSION, loadRegistry, loadSetsWithProject, registryDir, scoreIdea } from "../engine.js";
 import { fmt } from "./_lib.js";
 
 export function cmdPlan(args) {
@@ -10,7 +10,7 @@ export function cmdPlan(args) {
     console.error('missing request text: skill-router plan "<request>"');
     return 1;
   }
-  const allSets = loadSets(reg);
+  const allSets = loadSetsWithProject(reg, args.sets);
   const { scored, setScores } = scoreIdea(payload, args.request, allSets);
   const top = scored.slice(0, 5);
   const best = setScores[0]?.[0] ?? "thinking";

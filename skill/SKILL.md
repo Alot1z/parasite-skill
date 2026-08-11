@@ -49,6 +49,7 @@ Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or
 | `--refresh` | Update all installed copies with the latest SKILL.md |
 | `--agents` | Generate AGENTS.md for the current project from the registry |
 | `--bundle` | Build a tarball + install.json for GitHub Pages (no-npm distribution) |
+| `parasite --status/--add/--toggle/--remove` | Manage runtime extensions that enhance skills, agents, hooks, and MCP servers **without modifying their source** (extension folders + manifest; fully toggleable and removable) |
 
 ## The Routing Process
 
@@ -120,6 +121,8 @@ skill-router sets --delete my-project
 
 Custom sets appear with a `*` marker in the sets listing. Built-in sets cannot be deleted, but you can create copies with `--new` and modify those.
 
+Project sets (from `skill-router.json`) appear with a `(project)` marker. They override any same-named set (built-in or custom) while the config is present, are never written to `sets.custom.json`, and are edited by changing the config file — not the `--new/--add/--remove/--delete` editor.
+
 ## Project Configuration
 
 Each project can define its own defaults via a `skill-router.json` (or `.skill-router.json`) file in the project root. The config is loaded automatically and merged with CLI flags (CLI flags take precedence).
@@ -135,7 +138,13 @@ The CLI walks up the directory tree from the current working directory to find a
   "registry": "./.skill-router/registry.json",
   "dirs": ["./skills", "./.agents/skills"],
   "defaultSet": "build",
-  "force": false
+  "force": false,
+  "sets": {
+    "proj-qa": {
+      "desc": "project QA workflow",
+      "members": ["verification-before-completion", "code-review-and-quality"]
+    }
+  }
 }
 ```
 
@@ -147,6 +156,7 @@ The CLI walks up the directory tree from the current working directory to find a
 | `dirs` | Comma-separated scan directories | `"./skills,./.agents/skills"` |
 | `defaultSet` | Default skill-set to use for routing | `"build"` |
 | `force` | Force rescan on every run | `true` |
+| `sets` | Project-defined skill-sets, merged into routing/planning/sets (override any same-named set — built-in or custom; marked `(project)` in listings) | `{"proj-qa": {"desc": "...", "members": ["..."]}}` |
 
 ### Example: Project-Specific Workflow
 
@@ -162,6 +172,13 @@ Create `skill-router.json` in your project root:
 Now `skill-router route "implement auth"` will automatically use the `build` set and scan your project's skill directories.
 
 ### Environment Variable
+
+`SKILL_ROUTER_HOME` overrides the home base for the registry, installs, sync, MCP, and every command — full environment isolation for sandboxes and tests:
+
+```bash
+SKILL_ROUTER_HOME=/tmp/sandbox skill-router scan   # everything stays in /tmp/sandbox
+SKILL_ROUTER_HOME=/tmp/sandbox skill-router route "idea"
+```
 
 Set `SKILL_ROUTER_VERBOSE=1` to see which config file is being loaded:
 

@@ -25,6 +25,7 @@ from conductor import (  # noqa: E402
     best_set,
     cmd_plan,
     SETS,
+    project_sets,
 )
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -91,6 +92,8 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
                             sets_map[k] = v
             except Exception:
                 pass
+        # Project-defined sets (skill-router.json) overlay custom sets last.
+        sets_map.update(project_sets())
         if sn:
             members = sets_map.get(sn, (None, []))[1]
             if not members:
@@ -116,14 +119,20 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
     def do_sets():
         apply = params.get("apply")
         payload = load_registry(reg, extra)
+        table = project_sets()
+        names = {s["name"] for s in payload["skills"]}
         if apply:
-            print(f"load order for '{apply}':")
-            order = ["frontend-design", "frontend-ui-engineering", "theme-factory", "artifacts-builder", "favicon"]
-            for i, n in enumerate(order, 1):
-                print(f"  {i}. {n}")
-        else:
-            for name in ["thinking", "research", "planning", "build", "docs", "review", "frontend", "ops", "intelligence"]:
-                print(f"  {name}")
+            entry = table.get(apply)
+            if not entry:
+                print(f"unknown set '{apply}'. available: {', '.join(table)}")
+                return 1
+            print(f"set '{apply}': {entry[0]}")
+            for i, m in enumerate(entry[1], 1):
+                print(f"  {i}. {m}" + ("" if m in names else "  (not installed)"))
+            return 0
+        for name, (desc, members) in table.items():
+            present = sum(1 for m in members if m in names)
+            print(f"  {name:14s} {desc:32s} {present}/{len(members)} installed")
         return 0
 
     def do_plan():
