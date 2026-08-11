@@ -1,12 +1,14 @@
 // doctor: one-shot health check for the whole package surface.
 //   parasite-skill doctor
 // Runs: registry load + spec validation, tools verify (scripts/policy/schema),
-// static risk audit (baseline diff when one exists), and a project-config
-// parse check. Exits 1 on the first failing check so CI can gate on it.
+// static risk audit (baseline diff when one exists), a project-config parse
+// check, and the project GC TTL posture. Exits 1 on the first failing check
+// so CI can gate on it.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadProjectConfig, loadRegistry, registryDir } from "../engine.js";
 import { auditSkillTools, filterToolsByPolicy, listSkillTools, resolveToolRun } from "../ai-tools.js";
+import { planGc } from "./tools.js";
 
 export function cmdDoctor(args = {}) {
   const reg = registryDir(args.registry);
@@ -75,6 +77,21 @@ export function cmdDoctor(args = {}) {
   const project = loadProjectConfig();
   if (project) ok("config", `project config loaded: ${project._path}`);
   else ok("config", "no project config present");
+
+  // 5. Project GC TTL posture: when a gc policy exists, dry-run it and report
+  // how many stale artifacts a prune would remove. Informational unless the
+  // policy declares `auto: true` (safe to run unattended) — then stale
+  // artifacts mean the scheduled cleanup has not happened, which is a failing
+  // check so CI catches a missed TTL sweep.
+  const gcPolicy = args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : null;
+  if (gcPolicy && (Number.isFinite(gcPolicy.ageDays) || Number.isFinite(gcPolicy.keep))) {
+    const { totals } = planGc(reg, { ageDays: gcPolicy.ageDays, keep: gcPolicy.keep, dryRun: true });
+    const stale = totals.agent_files + totals.ledger_entries;
+    if (gcPolicy.auto === true && stale) fail("gc", `${stale} stale artifact(s) under the auto gc policy; run tools gc to clear`);
+    else ok("gc", stale ? `${stale} stale artifact(s) under the gc policy (age ${gcPolicy.ageDays ?? "-"}d, keep ${gcPolicy.keep ?? "-"}); run tools gc` : "no stale artifacts under the gc policy");
+  } else {
+    ok("gc", "no gc TTL policy configured (parasite-skill.json \"gc\": { \"ageDays\": N, \"keep\": N })");
+  }
 
   if (args.json) {
     console.log(JSON.stringify({ ok: failed === 0, failed, checks }, null, 2));

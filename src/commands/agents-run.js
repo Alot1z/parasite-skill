@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { composePayload, loadRegistry, loadSetsWithProject, registryDir } from "../engine.js";
 import { AGENT_PROFILES } from "../data/agent-profiles.js";
-import { listSkillTools, policyFor, resolveToolRun, runSkillTool } from "../ai-tools.js";
+import { auditSkillTools, listSkillTools, policyFor, resolveToolRun, runSkillTool } from "../ai-tools.js";
 import { fmt } from "./_lib.js";
 import { smallLogo } from "../logo.js";
 
@@ -17,8 +17,11 @@ function slugify(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 48).replace(/^-|-$/g, "") || "request";
 }
 
-function runProfile(profile, request, { payload, sets, reg, policyConfig, maxTools, timeoutMs, maxChars, top, excludeSkills, ranTools, dryRun = false }) {
+function runProfile(profile, request, { payload, sets, reg, policyConfig, maxTools, timeoutMs, maxChars, top, excludeSkills, ranTools, dryRun = false, riskByName }) {
   const def = AGENT_PROFILES[profile];
+  // Per-tool static-audit risk is joined once in cmdAgentsRun and passed down
+  // so every report entry carries its posture without re-reading every asset
+  // per profile (agents run --all runs six profiles over the same payload).
   // Per-profile policy resolution: project base rules merged with scoped rules
   // keyed by profile:<name> and sets:<set> — so one config file can express
   // different tool boundaries per agent role without hand-editing.
@@ -103,6 +106,7 @@ function runProfile(profile, request, { payload, sets, reg, policyConfig, maxToo
       skill: run.skill,
       status: run.status,
       duration_ms: run.duration_ms,
+      risk: riskByName.get(run.name) ?? "low",
       stdout_chars: (run.stdout ?? "").length,
       stderr_chars: (run.stderr ?? "").length,
     })),
@@ -120,6 +124,8 @@ export function cmdAgentsRun(args = {}) {
   const payload = loadRegistry(reg, args.dirs, args.force);
   const sets = loadSetsWithProject(reg, args.sets);
   const policy = args.tools ?? null;
+  // One audit for the whole run, shared by every profile's report.
+  const riskByName = new Map(auditSkillTools(payload).map((entry) => [entry.name, entry.risk]));
 
   if (args.all) {
     if (!request) {
@@ -139,7 +145,7 @@ export function cmdAgentsRun(args = {}) {
     const allProfiles = !args.profiles;
     const ranTools = new Set();
     const reports = profileNames.map((name) =>
-      runProfile(name, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun }),
+      runProfile(name, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun, riskByName }),
     );
     if (args.dryRun) {
       const dir = join(reg, "agents");
@@ -221,7 +227,7 @@ export function cmdAgentsRun(args = {}) {
         `## ${report.profile} — ${report.profile_desc}`,
         `Routed ${report.scoped_to_profile_sets ? "within profile sets" : "full registry"} -> set ${report.decision.selectedSet}`,
         `Tools: ${report.summary}`,
-        ...report.tool_runs.map((run) => `- ${run.name}: ${run.ok ? "ok" : `exit ${run.status}`} (${run.duration_ms}ms)`),
+        ...report.tool_runs.map((run) => `- ${run.name}: ${run.ok ? "ok" : `exit ${run.status}`} (${run.duration_ms}ms) [risk ${run.risk}]`),
         "",
       ]).flat(),
       `Report: ${base}.json`,
@@ -255,7 +261,7 @@ export function cmdAgentsRun(args = {}) {
   }
 
   const ranTools = new Set();
-  const report = runProfile(profile, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun });
+  const report = runProfile(profile, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun, riskByName });
   if (args.dryRun) {
     const dir = join(reg, "agents");
     mkdirSync(dir, { recursive: true });
@@ -330,7 +336,7 @@ export function cmdAgentsRun(args = {}) {
     "",
     "## Tool runs",
     ...(report.tool_runs.length
-      ? report.tool_runs.map((run) => `- ${run.name}: ${run.ok ? "ok" : `exit ${run.status}`} (${run.duration_ms}ms)` + (run.stderr ? ` — ${run.stderr.slice(0, 200)}` : ""))
+      ? report.tool_runs.map((run) => `- ${run.name}: ${run.ok ? "ok" : `exit ${run.status}`} (${run.duration_ms}ms) [risk ${run.risk}]` + (run.stderr ? ` — ${run.stderr.slice(0, 200)}` : ""))
       : ["- no script tools selected"]),
     "",
     "## Guardrails",

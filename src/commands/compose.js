@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { composePayload, loadRegistry, loadSetsWithProject, registryDir } from "../engine.js";
+import { auditSkillTools } from "../ai-tools.js";
 import { fmt } from "./_lib.js";
 
 function slugify(value) {
@@ -16,6 +17,9 @@ export function cmdCompose(args) {
     return 1;
   }
   const sets = loadSetsWithProject(reg, args.sets);
+  // Each selected skill's callable tools carry their static-audit risk so the
+  // payload shows posture; the engine joins it via the toolsRisk option.
+  const toolsRisk = Object.fromEntries(auditSkillTools(payload).map((entry) => [entry.name, entry.risk]));
   const runtime = composePayload(payload, idea, {
     sets,
     top: args.top,
@@ -23,6 +27,7 @@ export function cmdCompose(args) {
     excludeSkills: args.excludeSkills,
     enabledSets: args.enabledSets,
     auto: args.auto === true,
+    toolsRisk,
   });
   const outDir = join(reg, "payload");
   mkdirSync(outDir, { recursive: true });

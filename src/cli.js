@@ -85,6 +85,7 @@ TOOLS FLAGS
   --skill G        tools list: filter tools by skill name glob
   --risk X         tools list: only tools at/above low|medium|high audit risk
   --public         export: strip filesystem paths (names/metadata only)
+  --json           export: print the LLM-ready inventory to stdout
   --max-tools N    agents run: cap the number of script tools executed
   --profiles a,b   agents run --all: run only these profiles
   --min-tools N    agents run: exit 1 when fewer than N tools succeeded
@@ -98,6 +99,7 @@ TOOLS FLAGS
   --history-until ISO  tools history: only entries at/before this timestamp
   --age N          tools gc: prune agent reports/ledger entries older than N days
   --keep N         tools gc: keep only the N most recent agent reports/ledger entries
+                   (falls back to the project gc policy in parasite-skill.json)
   --strict         agents run: exit 2 if any selected tool is policy-blocked
   --baseline       tools audit: diff against the persisted risk baseline
   --write-baseline tools audit: seed the risk baseline file

@@ -17,6 +17,41 @@ function git(args, cwd) {
 }
 
 /**
+ * Best-effort read-only snapshot of the sync repo state (no git writes, no
+ * remote contact). Used by `export` so the ecosystem inventory also knows the
+ * backup posture. Never throws: returns { repo: false } when unavailable.
+ */
+export function syncState() {
+  const root = SKILLS_HOME();
+  if (!existsSync(join(root, ".git"))) return { repo: false, root };
+  try {
+    let branch = "main";
+    try {
+      branch = git(["rev-parse", "--abbrev-ref", "HEAD"], root);
+    } catch {
+      /* unborn HEAD */
+    }
+    let remote = null;
+    try {
+      const remotes = git(["remote", "-v"], root);
+      remote = remotes.split("\n")[0]?.trim() || null;
+    } catch {
+      /* no remote */
+    }
+    let changes = 0;
+    try {
+      const dirty = git(["status", "--porcelain"], root);
+      changes = dirty ? dirty.split("\n").filter(Boolean).length : 0;
+    } catch {
+      /* unreadable */
+    }
+    return { repo: true, root, branch, remote, changes };
+  } catch {
+    return { repo: false, root };
+  }
+}
+
+/**
  * Cloud sync: backs up the whole skills tree (registry + all installed skills)
  * to a git remote. `sync --init <repo-url>` sets it up; `--push` and `--pull`
  * sync. GitHub Actions template in template/ gives users a ready repo.

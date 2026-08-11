@@ -95,6 +95,15 @@ parasite-skill tools gc --age 30 --dry-run          # preview pruning stale arti
 parasite-skill tools gc --keep 20                   # keep only the newest 20 reports/entries
 ```
 
+`tools gc` honors a project **GC TTL policy** when no CLI knobs are given — put
+`"gc": { "ageDays": 30, "keep": 20, "auto": true }` in `parasite-skill.json`
+and every `tools gc` (and `doctor`) uses it as the default, so scheduled
+cleanup can be expressed in config instead of remembering flags. `doctor`
+reports the policy posture as a check — and when the policy declares
+`"auto": true` (safe to run unattended), stale artifacts under the policy
+become a *failing* doctor check so CI catches a missed TTL sweep. `export`
+records the policy and the stale-artifact dry-run count in `ecosystem.json`.
+
 `tools verify` checks every discovered tool (script exists, policy status,
 schema shape) and exits 1 when anything is broken — a cheap readiness gate
 before a release or a fresh machine. `tools audit --write-baseline` persists
@@ -260,7 +269,7 @@ The typed graph models:
 
 `graph --dot` and `graph --mmd` are suitable for Graphviz and Mermaid. The legacy skill vocabulary graph remains available with `parasite-skill graph --dot` without `--ecosystem`. The `ix` skill can map this repository for symbol-level callers, callees, impact, and smells; the generated ecosystem graph is the portable package-level view and does not vendor Ix.
 
-`export` and private `wikis` inventories never publish file contents, secrets, environment values, or chat history. Use `--public` for graph/wiki artifacts intended for Pages: it removes filesystem paths and sanitizes generated descriptions while keeping only public metadata.
+`export` and private `wikis` inventories never publish file contents, secrets, environment values, or chat history. Use `--public` for graph/wiki artifacts intended for Pages: it removes filesystem paths and sanitizes generated descriptions while keeping only public metadata. `export` also records the project **GC TTL policy** (age/keep/auto + stale-artifact dry-run count) and the **sync backup posture** (repo present, branch, uncommitted change count) in `ecosystem.json` + `ECOSYSTEM.md`, so the AI layer knows not just what is installed but how clean and backed up it is. `export --json` prints the same LLM-ready inventory to stdout for CI/MCP.
 
 ## Wiki lists each skill's AI-tools
 
@@ -332,12 +341,19 @@ parasite-skill llm "review this routing plan"
 Local endpoints are allowed by default. External HTTPS endpoints require `--allow-remote`; redirects are disabled and response/output sizes are bounded. Prefer `PARASITE_SKILL_LLM_API_KEY` over command-line keys.
 
 When the registry contains runnable skill tools, `llm` exposes them to the
-model as native functions and executes the tool calls it makes, feeding the
-redacted results back in a loop (max `--max-tool-calls` iterations, default 8)
-until the model produces a final answer. Disable with `--no-tools`. Add
-`--tool-dry-run` to preview the model's tool calls instead: each requested tool
-is resolved and reported as the exact command that *would* run, but nothing is
-ever executed or recorded.
+model as native functions — each schema annotated with its static-audit
+`[risk: low|medium|high]` so the model can avoid high-risk tools unless the task
+truly needs them — and executes the tool calls it makes, feeding the redacted
+results back in a loop (max `--max-tool-calls` iterations, default 8) until the
+model produces a final answer. Disable with `--no-tools`. Add `--tool-dry-run`
+to preview the model's tool calls instead: each requested tool is resolved and
+reported as the exact command that *would* run, but nothing is ever executed or
+recorded.
+
+Agent run reports now carry each tool's static-audit `risk` (`tool_runs[*].risk`
+in the saved JSON and `[risk X]` markers in the markdown), and `compose`/`plan`
+payloads annotate every selected skill's callable tools with `risk`, so posture
+is visible at every layer: payload, plan, report, and export.
 
 Freebuff history recovery is explicit:
 

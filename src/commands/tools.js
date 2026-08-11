@@ -42,6 +42,69 @@ function actionArgs(args) {
   return { raw, sub, tail };
 }
 
+/**
+ * Plan (and optionally apply) a registry GC. Returns { removed, totals }
+ * without side effects when dryRun is true. Prunes agent report/dry-run files
+ * by mtime and audit-ledger entries by timestamp. Shared by `tools gc`, the
+ * doctor health check, and the project `gc` TTL policy.
+ */
+export function planGc(reg, { ageDays, keep, dryRun = false } = {}) {
+  const byAge = Number.isFinite(ageDays) && ageDays >= 0;
+  const byKeep = Number.isFinite(keep) && keep >= 0;
+  const now = Date.now();
+  const dayMs = 86_400_000;
+  const removed = { agent_files: [], ledger_entries: 0, ledger_bytes: 0 };
+
+  const agentsDir = join(reg, "agents");
+  let reportFiles = [];
+  if (existsSync(agentsDir)) {
+    reportFiles = readdirSync(agentsDir)
+      .filter((name) => name.endsWith(".md") || name.endsWith(".json"))
+      .map((name) => {
+        const full = join(agentsDir, name);
+        try {
+          return { name, full, mtimeMs: statSync(full).mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  }
+  let survivors = reportFiles;
+  if (byAge) survivors = survivors.filter((file) => now - file.mtimeMs <= ageDays * dayMs);
+  if (byKeep) survivors = survivors.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, keep);
+  const survivorSet = new Set(survivors.map((file) => file.full));
+  for (const file of reportFiles) {
+    if (!survivorSet.has(file.full)) {
+      removed.agent_files.push(file.name);
+      if (!dryRun) rmSync(file.full, { force: true });
+    }
+  }
+
+  const ledgerPath = join(reg, "tool-runs.jsonl");
+  const rawLines = existsSync(ledgerPath) ? readFileSync(ledgerPath, "utf-8").split("\n").filter(Boolean) : [];
+  const parsed = rawLines
+    .map((line, index) => {
+      try {
+        return { index, ts: Date.parse(JSON.parse(line).ts) || 0 };
+      } catch {
+        return { index, ts: 0 };
+      }
+    })
+    .sort((a, b) => a.index - b.index);
+  let keptLines = parsed;
+  if (byAge) keptLines = keptLines.filter((entry) => now - entry.ts <= ageDays * dayMs);
+  if (byKeep) keptLines = keptLines.slice(-keep);
+  const keptIndexes = new Set(keptLines.map((entry) => entry.index));
+  const dropped = rawLines.filter((_, index) => !keptIndexes.has(index));
+  removed.ledger_entries = dropped.length;
+  removed.ledger_bytes = dropped.reduce((n, line) => n + Buffer.byteLength(line) + 1, 0);
+  if (dropped.length && !dryRun) {
+    writeFileSync(ledgerPath, rawLines.filter((_, index) => keptIndexes.has(index)).join("\n") + (keptIndexes.size ? "\n" : ""), "utf-8");
+  }
+  return { removed, totals: { agent_files: removed.agent_files.length, ledger_entries: removed.ledger_entries } };
+}
+
 export function cmdTools(args = {}) {
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);
@@ -73,7 +136,10 @@ export function cmdTools(args = {}) {
     } else {
       console.log(`callable skill tools: ${tools.length}`);
       for (const tool of tools) {
-        console.log(`  ${tool.name}  (${tool.language}, ${tool.skill})  — ${tool.description}`);
+        // When the audit join was computed (--risk filter), show the posture
+        // inline as [H]/[M]/[L] so text output carries risk too.
+        const riskMark = riskByName ? `[${riskByName.get(tool.name) === "high" ? "H" : riskByName.get(tool.name) === "medium" ? "M" : "L"}] ` : "";
+        console.log(`  ${riskMark}${tool.name}  (${tool.language}, ${tool.skill})  — ${tool.description}`);
       }
       console.log("run one: parasite-skill tools run <name> [args]  (explicit, bounded, captured)");
     }
@@ -242,77 +308,30 @@ export function cmdTools(args = {}) {
     // and the audit ledger (by entry timestamp). --age N keeps only artifacts
     // younger than N days; --keep N keeps only the N most recent files/entries.
     // --dry-run previews everything without deleting; --json is machine
-    // readable. At least one of --age/--keep must be given.
+    // readable. Falls back to the project `gc` TTL policy (parasite-skill.json
+    // "gc": { "ageDays", "keep", "auto" }) when no CLI knobs are given.
+    const dryRun = args.dryRun === true;
     const ageDays = Number(args.age);
     const keep = Number(args.keep);
-    const byAge = Number.isFinite(ageDays) && ageDays >= 0;
-    const byKeep = Number.isFinite(keep) && keep >= 0;
+    const cliAge = Number.isFinite(ageDays) && ageDays >= 0;
+    const cliKeep = Number.isFinite(keep) && keep >= 0;
+    const policy = args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : null;
+    const policyAge = Number.isFinite(policy?.ageDays) && policy.ageDays >= 0;
+    const policyKeep = Number.isFinite(policy?.keep) && policy.keep >= 0;
+    const byAge = cliAge || policyAge;
+    const byKeep = cliKeep || policyKeep;
     if (!byAge && !byKeep) {
-      console.error("tools gc requires --age N (days) and/or --keep N (count); add --dry-run to preview");
+      console.error("tools gc requires --age N (days) and/or --keep N (count), or a project gc policy; add --dry-run to preview");
       return 1;
     }
-    const now = Date.now();
-    const dayMs = 86_400_000;
-    const dryRun = args.dryRun === true;
-    const removed = { agent_files: [], ledger_entries: 0, ledger_bytes: 0 };
-
-    // Agent reports + dry-runs live in registry/agents. Each file is pruned
-    // when older than --age days, or when it falls beyond the --keep newest.
-    const agentsDir = join(reg, "agents");
-    let reportFiles = [];
-    if (existsSync(agentsDir)) {
-      reportFiles = readdirSync(agentsDir)
-        .filter((name) => name.endsWith(".md") || name.endsWith(".json"))
-        .map((name) => {
-          const full = join(agentsDir, name);
-          try {
-            return { name, full, mtimeMs: statSync(full).mtimeMs };
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
-    }
-    let survivors = reportFiles;
-    if (byAge) survivors = survivors.filter((file) => now - file.mtimeMs <= ageDays * dayMs);
-    if (byKeep) survivors = survivors.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, keep);
-    const survivorSet = new Set(survivors.map((file) => file.full));
-    for (const file of reportFiles) {
-      if (!survivorSet.has(file.full)) {
-        removed.agent_files.push(file.name);
-        if (!dryRun) rmSync(file.full, { force: true });
-      }
-    }
-
-    // Audit ledger: read entries (oldest first), drop stale/overflowing ones,
-    // then rewrite the file with the survivors only.
-    const ledgerPath = join(reg, "tool-runs.jsonl");
-    const rawLines = existsSync(ledgerPath) ? readFileSync(ledgerPath, "utf-8").split("\n").filter(Boolean) : [];
-    const parsed = rawLines
-      .map((line, index) => {
-        try {
-          return { index, ts: Date.parse(JSON.parse(line).ts) || 0 };
-        } catch {
-          return { index, ts: 0 };
-        }
-      })
-      .sort((a, b) => a.index - b.index);
-    let keptLines = parsed;
-    if (byAge) keptLines = keptLines.filter((entry) => now - entry.ts <= ageDays * dayMs);
-    if (byKeep) keptLines = keptLines.slice(-keep);
-    const keptIndexes = new Set(keptLines.map((entry) => entry.index));
-    const dropped = rawLines.filter((_, index) => !keptIndexes.has(index));
-    removed.ledger_entries = dropped.length;
-    removed.ledger_bytes = dropped.reduce((n, line) => n + Buffer.byteLength(line) + 1, 0);
-    if (dropped.length && !dryRun) {
-      writeFileSync(ledgerPath, rawLines.filter((_, index) => keptIndexes.has(index)).join("\n") + (keptIndexes.size ? "\n" : ""), "utf-8");
-    }
-
-    const totals = { agent_files: removed.agent_files.length, ledger_entries: removed.ledger_entries };
+    const effAge = cliAge ? ageDays : policy?.ageDays;
+    const effKeep = cliKeep ? keep : policy?.keep;
+    const source = cliAge || cliKeep ? (policyAge || policyKeep ? "cli + project gc policy" : "cli") : "project gc policy";
+    const { removed, totals } = planGc(reg, { ageDays: effAge, keep: effKeep, dryRun });
     if (args.json) {
-      console.log(JSON.stringify({ dry_run: dryRun, removed, totals }, null, 2));
+      console.log(JSON.stringify({ dry_run: dryRun, source, removed, totals }, null, 2));
     } else if (dryRun) {
-      console.log(`tools gc dry-run (${byAge ? `age < ${ageDays}d, ` : ""}${byKeep ? `keep ${keep} newest` : ""}):`);
+      console.log(`tools gc dry-run (${source}: ${byAge ? `age < ${effAge}d, ` : ""}${byKeep ? `keep ${effKeep} newest` : ""}):`);
       if (!totals.agent_files && !totals.ledger_entries) console.log("  nothing to prune");
       for (const name of removed.agent_files) console.log(`  - agent report: ${name}`);
       if (removed.ledger_entries) console.log(`  - ledger: ${removed.ledger_entries} entries (${removed.ledger_bytes} bytes)`);

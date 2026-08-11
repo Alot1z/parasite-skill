@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scan, composePayload, mergeConfig } from "../src/engine.js";
+import { planGc } from "../src/commands/tools.js";
 import { auditSkillTools, filterToolsByPolicy, listSkillTools, policyFor, readToolRuns, resolveToolRun, runSkillTool, validateToolArgs } from "../src/ai-tools.js";
 import { cmdTools } from "../src/commands/tools.js";
 import { cmdAgentsRun } from "../src/commands/agents-run.js";
@@ -1850,6 +1851,247 @@ describe("sync dry-run and llm json trace", () => {
       console.log = orig;
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("gc TTL policy, sync posture, risk layers", () => {
+  test("mergeConfig parses the gc TTL policy", () => {
+    const merged = mergeConfig({ gc: { ageDays: 30, keep: 20, auto: true } }, {});
+    expect(merged.gc).toEqual({ ageDays: 30, keep: 20, auto: true });
+    expect(mergeConfig({ gc: { ageDays: -1 } }, {}).gc).toBeUndefined();
+    expect(mergeConfig({ gc: "nope" }, {}).gc).toBeUndefined();
+  });
+
+  test("tools gc falls back to the project gc policy when no CLI knobs are given", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const agentsDir = join(registry, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, "stale-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    const payload = scan([dirs]);
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // Policy drives gc: keep 1 trims the ledger to a single newest entry;
+      // the single report file is the newest, so it survives.
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", gc: { keep: 1 } })).toBe(0);
+      expect(readToolRuns(registry).length).toBe(1);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(true);
+      // ageDays 0 prunes everything (nothing is younger than 0 days).
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", gc: { ageDays: 0 } })).toBe(0);
+      expect(readToolRuns(registry).length).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(false);
+      // Without any policy or flags: usage error.
+      expect(cmdTools({ registry, dirs, toolsAction: "gc" })).toBe(1);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("doctor reports the gc policy posture", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdDoctor({ registry, dirs, gc: { ageDays: 30 } })).toBe(0);
+      const text = out.join("\n");
+      expect(text).toContain("gc");
+      expect(text).toContain("no stale artifacts under the gc policy");
+      out.length = 0;
+      // Without a policy, doctor notes the absence instead of failing.
+      expect(cmdDoctor({ registry, dirs })).toBe(0);
+      expect(out.join("\n")).toContain("no gc TTL policy configured");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("planGc is shared and side-effect free when dryRun", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const payload = scan([dirs]);
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    const plan = planGc(registry, { ageDays: 0, dryRun: true });
+    expect(plan.totals.ledger_entries).toBe(1);
+    expect(readToolRuns(registry).length).toBe(1); // nothing deleted
+  });
+
+  test("compose payload tools carry risk when toolsRisk is supplied", () => {
+    const { dirs } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const payload = scan([dirs]);
+    const runtime = composePayload(payload, "debug failing tests", {
+      top: 3,
+      toolsRisk: { "demo-skill__hello": "high" },
+    });
+    const skill = runtime.selectedSkills.find((s: { name: string }) => s.name === "demo-skill");
+    expect(skill).toBeTruthy();
+    expect(skill.tools.find((t: { name: string }) => t.name === "demo-skill__hello").risk).toBe("high");
+    // Without toolsRisk the payload stays lean (no risk key).
+    const plain = composePayload(payload, "debug failing tests", { top: 3 });
+    const plainTool = plain.selectedSkills.find((s: { name: string }) => s.name === "demo-skill").tools[0];
+    expect(plainTool.risk).toBeUndefined();
+  });
+
+  test("agents run reports carry per-tool risk", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/inspect.py": "import sys\nprint('inspected')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], maxTools: 4, json: true })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      expect(parsed.tool_runs.some((run: { name: string }) => run.name === "demo-skill__inspect")).toBe(true);
+      expect(parsed.tool_runs.find((run: { name: string }) => run.name === "demo-skill__inspect").risk).toBe("low");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("llm tool schemas carry risk annotations", async () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const originalFetch = globalThis.fetch;
+    let receivedSchemas: any;
+    globalThis.fetch = async (_url: any, options: any) => {
+      receivedSchemas = JSON.parse(options.body).tools;
+      return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "answer" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(await cmdLlm({ request: "debug failing tests", endpoint: "http://localhost:1234/v1", model: "m", registry, dirs })).toBe(0);
+      const schema = receivedSchemas.find((s: any) => s.function.name === "demo-skill__hello");
+      expect(schema.function.description).toContain("[risk: low]");
+    } finally {
+      console.log = orig;
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("export records gc policy and sync posture; --json prints the inventory", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdExport({ registry, dirs, gc: { ageDays: 30, keep: 20 }, json: true })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      expect(parsed.kind).toBe("parasite-skill-ecosystem");
+      expect(parsed.gc.age_days).toBe(30);
+      expect(parsed.gc.stale.agent_files).toBe(0);
+      expect(parsed.sync.repo).toBe(false);
+      // The saved file carries the same posture.
+      const eco = JSON.parse(readFileSync(join(registry, "ecosystem.json"), "utf-8"));
+      expect(eco.gc.keep).toBe(20);
+      const md = readFileSync(join(registry, "ECOSYSTEM.md"), "utf-8");
+      expect(md).toContain("## GC TTL Policy & Sync Posture");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("MCP export tool returns the inventory and llm tool previews tool calls", async () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const list = await handleMessage({ jsonrpc: "2.0", id: 30, method: "tools/list", params: {} });
+    const names = list.result.tools.map((tool: { name: string }) => tool.name);
+    expect(names).toContain("export");
+    expect(names).toContain("llm");
+    const exported = await handleMessage({ jsonrpc: "2.0", id: 31, method: "tools/call", params: { name: "export", arguments: { dirs, registry } } });
+    expect(exported.result.content[0].text).toContain("parasite-skill-ecosystem");
+    expect(exported.result.content[0].text).toContain("demo-skill");
+  });
+
+  test("MCP llm tool runs the async path with a mocked endpoint", async () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hello")\n',
+    });
+    const originalFetch = globalThis.fetch;
+    const bodies: any[] = [];
+    let calls = 0;
+    globalThis.fetch = async (_url: any, options: any) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      calls++;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "demo-skill__hello", arguments: "{}" } }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "mcp grounded answer" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    try {
+      const res = await handleMessage({
+        jsonrpc: "2.0",
+        id: 32,
+        method: "tools/call",
+        params: { name: "llm", arguments: { request: "debug failing tests", endpoint: "http://localhost:1234/v1", model: "m", dirs, registry } },
+      });
+      expect(res.result.content[0].text).toContain("mcp grounded answer");
+      expect(bodies.length).toBe(2);
+      // The tool schema was risk-annotated through the async path.
+      expect(bodies[0].tools.some((tool: any) => tool.function.description.includes("[risk: low]"))).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("python twin exposes export and llm tools", () => {
+    const code = "import json, sys; sys.path.insert(0, 'skill/scripts'); import mcp_server; print(json.dumps([t['name'] for t in mcp_server.TOOLS]))";
+    const names = JSON.parse(execFileSync(PY, ["-c", code], { encoding: "utf8" }).trim());
+    expect(names).toContain("export");
+    expect(names).toContain("llm");
+    const base = join(tmpdir(), `sr-py-export-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const skillDir = join(base, ".agents", "skills", "demo-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n");
+    writeFileSync(join(skillDir, "scripts", "hello.py"), 'print("hi")\n');
+    writeFileSync(
+      join(regDir, "registry.json"),
+      JSON.stringify({ skills: [{ name: "demo-skill", path: skillDir, assets: [{ path: "scripts/hello.py", group: "scripts", language: "python" }] }] }),
+    );
+    const exportCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, 'skill/scripts')",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('export', {'public': True})",
+      "eco = json.loads(text)",
+      // public marker is set, tools carry static-audit risk, and --public strips
+      // filesystem paths — parity with the JS twin's public-safe export.
+      "print(eco['public'], eco['tools'][0]['risk'], 'no-path' if 'path' not in eco['skills'][0] else 'leaked')",
+    ].join("; ");
+    const result = execFileSync(PY, ["-c", exportCode], { encoding: "utf8" }).trim();
+    expect(result).toContain("True");
+    expect(result).toContain("low");
+    expect(result).toContain("no-path");
   });
 });
 

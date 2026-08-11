@@ -15,6 +15,8 @@ import { mcpRegistrationStatus } from "../mcp-register.js";
 import { AGENT_PROFILES } from "../data/agent-profiles.js";
 import { buildEcosystemGraph, publicGraph } from "../ecosystem-graph.js";
 import { auditSkillTools, listSkillTools } from "../ai-tools.js";
+import { syncState } from "./sync.js";
+import { planGc } from "./tools.js";
 import { fmt } from "./_lib.js";
 
 // Rule/config files checked for existence only (no contents).
@@ -144,6 +146,25 @@ export function cmdExport(args) {
     args_schema: !!tool.argsSchema,
   }));
 
+  // ---- gc TTL policy + sync backup posture (names/state only) --------------
+  // The gc policy comes from the caller (merged project config rides on
+  // args.gc) or the walked-up project config on disk.
+  const gcPolicy =
+    args.gc && typeof args.gc === "object" && !Array.isArray(args.gc)
+      ? args.gc
+      : project?.gc && typeof project.gc === "object" && !Array.isArray(project.gc)
+        ? project.gc
+        : null;
+  const gc = gcPolicy
+    ? {
+        age_days: typeof gcPolicy.ageDays === "number" ? gcPolicy.ageDays : null,
+        keep: typeof gcPolicy.keep === "number" ? gcPolicy.keep : null,
+        auto: gcPolicy.auto === true,
+        stale: planGc(reg, { ageDays: gcPolicy.ageDays, keep: gcPolicy.keep, dryRun: true }).totals,
+      }
+    : null;
+  const sync = syncState();
+
   // ---- LLM-ready JSON ------------------------------------------------------
   const llm = {
     kind: "parasite-skill-ecosystem",
@@ -175,6 +196,10 @@ export function cmdExport(args) {
     ),
     clients,
     extensions,
+    gc: isPublic ? (gc ? { age_days: gc.age_days, keep: gc.keep, auto: gc.auto } : null) : gc,
+    sync: isPublic
+      ? { repo: sync.repo, branch: sync.repo ? sync.branch : null, changes: sync.repo ? sync.changes : null }
+      : { repo: sync.repo, branch: sync.repo ? sync.branch : null, changes: sync.repo ? sync.changes : null, root: sync.repo ? sync.root : null, remote: sync.repo ? sync.remote : null },
     mcp: isPublic
       ? mcp.map((m) => ({ label: m.label, registered: m.registered }))
       : mcp,
@@ -274,6 +299,20 @@ export function cmdExport(args) {
   for (const m of mcp) md.push(`| ${m.label} | ${m.registered ? "yes" : "-"} | ${isPublic ? (m.registered ? "present" : "-") : m.file} |`);
   md.push("");
 
+  md.push("## GC TTL Policy & Sync Posture", "");
+  if (gc) {
+    md.push(`- gc policy: age ${gc.age_days ?? "-"}d · keep ${gc.keep ?? "-"} · auto ${gc.auto ? "yes" : "no"}`);
+    md.push(`- stale artifacts (dry-run): ${gc.stale.agent_files} report(s) + ${gc.stale.ledger_entries} ledger entrie(s)`);
+  } else {
+    md.push("- gc policy: none configured (parasite-skill.json \"gc\": { ageDays, keep, auto })");
+  }
+  md.push(
+    sync.repo
+      ? `- sync repo: yes · branch ${sync.branch}${sync.remote ? ` · remote ${isPublic ? "present" : sync.remote}` : ""} · ${sync.changes} uncommitted change(s)`
+      : "- sync repo: none initialized",
+    "",
+  );
+
   md.push("## Rules & Configs (existence only)", "");
   const ruleMd = isPublic ? globalRules.map((p) => `- ${basename(p)}`) : globalRules.map((p) => `- ${p}`);
   if (globalRules.length) md.push("### Global", "", ...ruleMd, "");
@@ -306,6 +345,11 @@ export function cmdExport(args) {
   if (!globalRules.length && !perClientRules.length && !projectInfo) md.push("None found.", "");
 
   writeFileSync(join(reg, "ECOSYSTEM.md"), md.join("\n"));
+  if (args.json) {
+    // Machine view for MCP/CI: the full LLM-ready inventory.
+    console.log(JSON.stringify(llm, null, 2));
+    return 0;
+  }
   console.log(`ecosystem written: ${fmt(join(reg, "ECOSYSTEM.md"))}`);
   console.log(`llm-ready json:    ${fmt(join(reg, "ecosystem.json"))}`);
   console.log(`${skills.length} skills · ${Object.keys(sets).length} sets · ${installedCount} client installs · ${llm.counts.extensions} extensions`);

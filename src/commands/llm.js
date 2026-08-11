@@ -1,5 +1,5 @@
 import { composePayload, loadRegistry, loadSetsWithProject, registryDir } from "../engine.js";
-import { listSkillTools, resolveToolRun, runSkillTool } from "../ai-tools.js";
+import { auditSkillTools, listSkillTools, resolveToolRun, runSkillTool } from "../ai-tools.js";
 
 function assertSafeEndpoint(raw, allowRemote) {
   let url;
@@ -44,12 +44,14 @@ function endpointFor(raw) {
   return value.endsWith("/chat/completions") ? value : `${value}/chat/completions`;
 }
 
-function toolSchemas(tools, limit = 40) {
+function toolSchemas(tools, riskByName, limit = 40) {
   return tools.slice(0, limit).map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
-      description: tool.description,
+      // Annotate each schema with its static-audit risk so the model can avoid
+      // high-risk tools unless the task genuinely needs them.
+      description: `${tool.description} [risk: ${riskByName?.get(tool.name) ?? "low"}]`,
       // Skills that declare an argsSchema expose their typed surface to the
       // model; otherwise a plain space-separated `args` string is offered.
       parameters:
@@ -87,12 +89,18 @@ export async function cmdLlm(args) {
 
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);
+  // Per-tool static-audit risk, joined once: the runtime payload carries it via
+  // toolsRisk and the native function schemas annotate it for the model.
+  // Skipped entirely with --no-tools so no asset is read for an unused surface.
+  const riskByName = args.noTools === true ? null : new Map(auditSkillTools(payload).map((entry) => [entry.name, entry.risk]));
+  const toolsRisk = riskByName ? Object.fromEntries(riskByName) : null;
   const runtime = composePayload(payload, request, {
     sets: loadSetsWithProject(reg, args.sets),
     top: args.top,
     maxChars: args.maxChars,
     excludeSkills: args.excludeSkills,
     enabledSets: args.enabledSets,
+    ...(toolsRisk ? { toolsRisk } : {}),
   });
   const dryRunTools = args.toolDryRun === true;
   const system = [
@@ -121,7 +129,7 @@ export async function cmdLlm(args) {
   const maxResponseChars = Math.max(1000, Math.min(Number(args.maxResponseChars) || 200000, 2000000));
   const maxToolCalls = Math.max(0, Math.min(Number(args.maxToolCalls) || 8, 32));
   const tools = args.noTools === true ? [] : listSkillTools(payload);
-  const schemas = toolSchemas(tools);
+  const schemas = toolSchemas(tools, riskByName);
   const policy = args.tools ?? null;
 
   const messages = [

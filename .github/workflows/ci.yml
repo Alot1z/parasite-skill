@@ -75,3 +75,13 @@ jobs:
           # catching nondeterministic audits or scans.
           node bin/parasite-skill.js tools audit --baseline --dirs skill
           node bin/parasite-skill.js agents run ecosystem-architect "verify the release" --dry-run --strict --max-tools 4 --dirs skill
+          # GC gate: the registry must survive a dry-run prune with the shipped
+          # skill (nothing deleted, exit 0), and a TTL policy prune must not
+          # remove the audit baseline or TOOLS.md.
+          node bin/parasite-skill.js tools gc --age 30 --dry-run --dirs skill
+          # Sync gate: in a fresh isolated home there is no sync repo, so
+          # --status must exit 1 with the documented guidance (not crash).
+          if node bin/parasite-skill.js sync --status > /dev/null 2>&1; then
+            echo "sync --status unexpectedly succeeded without a repo"
+            exit 1
+          fi

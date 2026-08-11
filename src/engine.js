@@ -441,6 +441,11 @@ export function classifyRequest(idea) {
 
 export function composePayload(payload, idea, options = {}) {
   const sets = options.sets ?? SETS;
+  // Optional per-tool static-audit risk map (name -> low|medium|high) supplied
+  // by command layers that already computed it (compose/plan/llm/agents-run).
+  // When present, every selected skill's tools carry their risk so the runtime
+  // payload shows posture without the engine doing its own audit.
+  const toolsRisk = options.toolsRisk && typeof options.toolsRisk === "object" ? options.toolsRisk : null;
   const allSkills = payload.skills ?? [];
   const classification = classifyRequest(idea, { skills: allSkills.map((skill) => skill.name).sort() });
   const base = scoreIdea(payload, idea, sets);
@@ -517,7 +522,11 @@ export function composePayload(payload, idea, options = {}) {
       assets: chosenAssets,
       // Callable AI-tools this skill declares (scripts/hooks/tools with a known
       // interpreter): names the host LLM can actually execute via tools run.
-      tools: callableToolsForSkill(skill),
+      // When the caller supplies a toolsRisk map, each tool carries its
+      // static-audit risk so the payload shows posture.
+      tools: toolsRisk
+        ? callableToolsForSkill(skill).map((tool) => ({ ...tool, risk: toolsRisk[tool.name] ?? "low" }))
+        : callableToolsForSkill(skill),
       excerpts,
     };
   });
@@ -810,6 +819,23 @@ export function mergeConfig(projectConfig, cliFlags) {
       merged.parasite = parasite;
     } else {
       console.error("Warning: invalid 'parasite' in parasite-skill.json (expected boolean or {enabled, clients[]})");
+    }
+  }
+
+  // Project GC TTL policy: prune stale registry artifacts on `tools gc` when
+  // CLI flags are absent. { ageDays?: number, keep?: number, auto?: boolean }.
+  // `ageDays` prunes artifacts older than N days; `keep` retains only the N
+  // newest; `auto` marks the policy as safe to run unattended (CI/doctor).
+  if (projectConfig.gc !== undefined && projectConfig.gc !== null) {
+    if (typeof projectConfig.gc === "object" && !Array.isArray(projectConfig.gc)) {
+      const gc = {};
+      if (typeof projectConfig.gc.ageDays === "number" && projectConfig.gc.ageDays >= 0) gc.ageDays = projectConfig.gc.ageDays;
+      if (typeof projectConfig.gc.keep === "number" && projectConfig.gc.keep >= 0) gc.keep = projectConfig.gc.keep;
+      if (typeof projectConfig.gc.auto === "boolean") gc.auto = projectConfig.gc.auto;
+      if (Object.keys(gc).length) merged.gc = gc;
+      else console.error("Warning: 'gc' in parasite-skill.json has no valid ageDays/keep/auto values");
+    } else {
+      console.error("Warning: invalid 'gc' in parasite-skill.json (expected object with ageDays/keep/auto)");
     }
   }
 

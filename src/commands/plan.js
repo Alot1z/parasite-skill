@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { VERSION, composePayload, loadRegistry, loadSetsWithProject, registryDir } from "../engine.js";
+import { auditSkillTools } from "../ai-tools.js";
 import { fmt } from "./_lib.js";
 
 function slugify(value) {
@@ -15,6 +16,7 @@ export function cmdPlan(args) {
     return 1;
   }
   const allSets = loadSetsWithProject(reg, args.sets);
+  const toolsRisk = Object.fromEntries(auditSkillTools(payload).map((entry) => [entry.name, entry.risk]));
   const runtime = composePayload(payload, args.request, {
     sets: allSets,
     top: args.top ?? 6,
@@ -22,6 +24,7 @@ export function cmdPlan(args) {
     excludeSkills: args.excludeSkills,
     enabledSets: args.enabledSets,
     auto: args.auto === true,
+    toolsRisk,
   });
   const chatSafe = args.chatSafe === true;
   const slug = slugify(args.request);

@@ -6,6 +6,8 @@ import { VERSION, loadRegistry, registryDir } from "./engine.js";
 import { auditSkillTools, filterToolsByPolicy, listSkillTools, renderToolsDocs, runSkillTool } from "./ai-tools.js";
 import {
   cmdDoctor,
+  cmdExport,
+  cmdLlm,
   cmdPlan,
   cmdCompose,
   cmdRefs,
@@ -162,6 +164,37 @@ const TOOLS = [
       required: ["name"],
     },
   },
+  {
+    name: "export",
+    description: "Inventory the whole ecosystem (skills, sets, clients, extensions, MCP, rules, tools, gc policy, sync posture) as LLM-ready JSON. Never exports file contents or secrets; --public strips filesystem paths.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dirs: { type: "string", description: "extra scan dirs, comma-separated" },
+        public: { type: "boolean", description: "strip filesystem paths for sharing" },
+      },
+    },
+  },
+  {
+    name: "llm",
+    description: "Send a bounded compose payload to an explicitly configured OpenAI-compatible endpoint and return the model's answer. Skill tools are exposed as native functions with risk annotations and executed in a bounded loop unless tool_dry_run is set. Local-only by default; set allow_remote for HTTPS.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        request: { type: "string", description: "the request text" },
+        endpoint: { type: "string", description: "OpenAI-compatible /chat/completions URL" },
+        model: { type: "string" },
+        allow_remote: { type: "boolean" },
+        max_output_tokens: { type: "number" },
+        max_response_chars: { type: "number" },
+        max_tool_calls: { type: "number" },
+        tool_dry_run: { type: "boolean" },
+        no_tools: { type: "boolean" },
+        dirs: { type: "string" },
+      },
+      required: ["request"],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------- handlers
@@ -171,9 +204,10 @@ function toolResult(text) {
 }
 
 // NOTE: command output is captured by swapping console.log for the duration of the
-// call. All commands emit synchronously, so nothing can leak into the JSON-RPC stream;
-// keep command handlers synchronous (no timers / deferred logs).
-function runTool(name, params = {}) {
+// call. All commands emit synchronously except `llm` (which awaits the bounded
+// model request); the swap stays active across the await, so nothing leaks into
+// the JSON-RPC stream. Keep other handlers synchronous (no timers / deferred logs).
+async function runTool(name, params = {}) {
   const ctx = {
     ...params,
     idea: params.idea ?? params.request,
@@ -218,6 +252,8 @@ function runTool(name, params = {}) {
         break;
       }
       case "doctor": code = cmdDoctor({ ...ctx, json: params.json !== false }); break;
+      case "export": code = cmdExport({ ...ctx, json: true, public: params.public === true }); break;
+      case "llm": code = await cmdLlm({ ...ctx, json: true, ...(params.endpoint ? { endpoint: params.endpoint } : {}), ...(params.model ? { model: params.model } : {}), allowRemote: params.allow_remote === true, maxOutputTokens: params.max_output_tokens, maxResponseChars: params.max_response_chars, maxToolCalls: params.max_tool_calls, toolDryRun: params.tool_dry_run === true, noTools: params.no_tools === true }); break;
       case "skill_tools_docs": {
         const payload = loadRegistry(registryDir(ctx.registry), ctx.dirs, ctx.force);
         console.log(renderToolsDocs(payload, { allow: params.allow, deny: params.deny }));
@@ -275,7 +311,7 @@ export async function handleMessage(msg) {
       return { jsonrpc: "2.0", id, error: { code: -32602, message: `unknown tool: ${name}` } };
     }
     try {
-      const { text, code } = runTool(name, params?.arguments ?? {});
+      const { text, code } = await runTool(name, params?.arguments ?? {});
       return { jsonrpc: "2.0", id, result: toolResult(text + (code !== 0 ? `\n(exit ${code})` : "")) };
     } catch (err) {
       return { jsonrpc: "2.0", id, error: { code: -32000, message: String(err.message ?? err) } };

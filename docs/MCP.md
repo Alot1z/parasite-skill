@@ -63,6 +63,8 @@ dependencies and does not require model credentials.
 | `skill_tools_docs` | `dirs?`, `allow?`, `deny?` | TOOLS.md reference of the callable skill AI-tool surface |
 | `skill_tools_run` | `name`, `args?`, `json_args?`, `timeout_ms?`, `dirs?`, `allow?`, `deny?`, `env?` | explicitly execute one skill AI-tool; bounded, captured, redacted, policy-gated; `json_args` is validated against the tool's declared `argsSchema`; a per-tool `timeoutMs` declared by the skill (via the `tools:` frontmatter block) is the fallback when `timeout_ms` is omitted — in both twins |
 | `doctor` | `dirs?` (JS twin); `—` (Python twin) | one-shot health check: registry load + spec validation + tool readiness + audit-baseline diff + project-config parse (JS); exits 1 on the first failing check |
+| `export` | `public?`, `dirs?` | LLM-ready ecosystem inventory (skills, sets, tools with risk, gc policy, sync posture). JS twin covers clients/extensions/MCP/rules too; Python twin covers the registry-derived subset. `public: true` strips filesystem paths |
+| `llm` | `request`, `endpoint?`, `model?`, `allow_remote?`, `max_output_tokens?`, `max_response_chars?`, `max_tool_calls?`, `tool_dry_run?`, `no_tools?`, `dirs?` | bounded completion against an explicitly configured OpenAI-compatible endpoint. JS twin executes model tool calls (risk-annotated schemas) in a loop; Python twin reports tool calls as previews for `skill_tools_run`/JS execution. Local-only by default |
 
 `compose` responses now carry per-selected-skill `tools` arrays (name,
 language, `argsSchema` presence) so the host can see the executable surface

@@ -68,6 +68,7 @@ parasite-skill tools policy --allow "a__*" --deny "b__*" [--dry-run]
 parasite-skill tools history [--clear] [--name G] [--skill G] [--status ok|fail] [--since ISO] [--until ISO]
 parasite-skill tools gc [--age N] [--keep N] [--dry-run]  # prune stale reports/ledger
 parasite-skill export [--public]                   # strip filesystem paths
+parasite-skill export --json                       # print the LLM-ready inventory
 parasite-skill sync --push|--pull [--dry-run]      # preview without side effects
 parasite-skill agents list|show <profile>          # inspect profiles, no run
 parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run] [--strict] [--min-tools N] [--json]
@@ -97,15 +98,20 @@ reports; `--strict` turns any policy-blocked tool into a hard failure
 runs a subset, and `--json` prints the report to stdout for scripts/CI.
 `tools history --since/--until` filters the ledger by time window. `tools gc`
 prunes stale agent reports and ledger entries by age (`--age N` days) or count
-(`--keep N` newest), with `--dry-run` previewing deletions. `doctor` runs the
-same gates as CI in one command: spec validation, tool readiness, audit
-baseline, and project-config parse — and is also exposed to MCP hosts as a
-`doctor` tool in both twins. `export` includes a `tools` array
-(name/skill/language/risk) so the AI layer knows the executable surface, and
-`export --public` strips filesystem paths for sharing. `sync --push/--pull
---dry-run` previews what a push would commit or a pull would fetch without
-changing anything. `llm --json` returns a `tool_calls` trace (name, status,
-duration, dry-run flag) alongside the model's answer.
+(`--keep N` newest), with `--dry-run` previewing deletions; a project `gc` TTL
+policy (`parasite-skill.json` `"gc": { "ageDays", "keep", "auto" }`) becomes
+the default when no CLI knobs are given, and `doctor` reports the policy
+posture. `doctor` runs the same gates as CI in one command: spec validation,
+tool readiness, audit baseline, and project-config parse — and is also exposed
+to MCP hosts as a `doctor` tool in both twins. `export` includes a `tools`
+array (name/skill/language/risk) so the AI layer knows the executable surface,
+plus the gc policy and sync backup posture; `export --public` strips
+filesystem paths for sharing and `export --json` prints the inventory.
+`sync --push/--pull --dry-run` previews what a push would commit or a pull
+would fetch without changing anything. `llm --json` returns a `tool_calls`
+trace (name, status, duration, dry-run flag) alongside the model's answer, and
+its native function schemas are annotated with `[risk: low|medium|high]`;
+`compose`/`plan` payloads and `agents run` reports carry per-tool risk too.
 `tools audit --write-baseline` persists expected per-tool risk and
 `--baseline` exits 1 on drift/regression; `tools verify` checks scripts,
 policy, and schema shape (exit 1 when broken); `tools history` filters the
