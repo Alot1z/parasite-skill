@@ -136,6 +136,7 @@ export async function cmdLlm(args) {
   };
 
   let lastText = "";
+  const trace = [];
   for (let call = 0; call <= maxToolCalls; call++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -182,6 +183,7 @@ export async function cmdLlm(args) {
     for (const callData of toolCalls.slice(0, 16)) {
       const fn = callData.function ?? {};
       let result;
+      let resultErr;
       try {
         const parsedArgs = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : (fn.arguments ?? {});
         const toolDef = tools.find((tool) => tool.name === fn.name);
@@ -219,8 +221,20 @@ export async function cmdLlm(args) {
           });
         }
       } catch (err) {
+        resultErr = err;
         result = { ok: false, name: fn.name, status: 2, stderr: String(err.message ?? err), duration_ms: 0 };
       }
+      // Keep a compact tool-call trace for --json consumers: which tool the
+      // model requested, whether it actually executed (or was only previewed),
+      // and its outcome. No output content is included.
+      trace.push({
+        name: result.name ?? fn.name,
+        status: result.status,
+        ok: !!result.ok,
+        duration_ms: result.duration_ms ?? 0,
+        dry_run: dryRunTools,
+        ...(resultErr ? { error: String(resultErr.message ?? resultErr) } : {}),
+      });
       messages.push({
         role: "tool",
         tool_call_id: callData.id ?? `call-${call}`,
@@ -230,7 +244,7 @@ export async function cmdLlm(args) {
   }
 
   if (args.json) {
-    console.log(JSON.stringify({ model, selectedSkills: runtime.selectedSkills.map((s) => s.name), response: lastText }, null, 2));
+    console.log(JSON.stringify({ model, selectedSkills: runtime.selectedSkills.map((s) => s.name), tool_calls: trace, response: lastText }, null, 2));
   } else {
     console.log(lastText || "(no final answer received)");
   }

@@ -62,6 +62,7 @@ dependencies and does not require model credentials.
 | `skill_tools_audit` | `threshold?`, `dirs?` | static risk audit of discovered skill AI-tools; never executes anything |
 | `skill_tools_docs` | `dirs?`, `allow?`, `deny?` | TOOLS.md reference of the callable skill AI-tool surface |
 | `skill_tools_run` | `name`, `args?`, `json_args?`, `timeout_ms?`, `dirs?`, `allow?`, `deny?`, `env?` | explicitly execute one skill AI-tool; bounded, captured, redacted, policy-gated; `json_args` is validated against the tool's declared `argsSchema`; a per-tool `timeoutMs` declared by the skill (via the `tools:` frontmatter block) is the fallback when `timeout_ms` is omitted — in both twins |
+| `doctor` | `dirs?` (JS twin); `—` (Python twin) | one-shot health check: registry load + spec validation + tool readiness + audit-baseline diff + project-config parse (JS); exits 1 on the first failing check |
 
 `compose` responses now carry per-selected-skill `tools` arrays (name,
 language, `argsSchema` presence) so the host can see the executable surface

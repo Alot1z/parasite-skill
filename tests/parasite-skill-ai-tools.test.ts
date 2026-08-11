@@ -1,5 +1,5 @@
 import { describe, expect, test, afterEach } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync, utimesSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import { cmdWikis } from "../src/commands/wikis.js";
 import { cmdTrace } from "../src/commands/trace.js";
 import { cmdRefs } from "../src/commands/refs.js";
 import { cmdLlm } from "../src/commands/llm.js";
+import { cmdSync } from "../src/commands/sync.js";
 import { buildEcosystemGraph, publicGraph } from "../src/ecosystem-graph.js";
 import { handleMessage } from "../src/mcp-server.js";
 
@@ -1622,6 +1623,232 @@ describe("doctor, export tools, agents json, wiki tools", () => {
       expect(page).toContain("demo-skill__hello");
     } finally {
       console.log = orig;
+    }
+  });
+});
+
+describe("tools gc and list --json risk", () => {
+  test("tools gc --age/--keep prunes agent reports and ledger entries", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    // Seed two agent reports (distinct mtimes) + ledger entries.
+    const agentsDir = join(registry, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, "old-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    const oldStamp = new Date("2020-01-01T00:00:00Z");
+    utimesSync(join(agentsDir, "old-report.json"), oldStamp, oldStamp);
+    writeFileSync(join(agentsDir, "new-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    const payload = scan([dirs]);
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    expect(readToolRuns(registry).length).toBe(2);
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // --dry-run reports what would be pruned without deleting anything.
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", keep: 1, dryRun: true })).toBe(0);
+      expect(out.join("\n")).toContain("dry-run");
+      expect(out.join("\n")).toContain("old-report.json");
+      expect(readToolRuns(registry).length).toBe(2);
+      expect(existsSync(join(agentsDir, "old-report.json"))).toBe(true);
+      expect(existsSync(join(agentsDir, "new-report.json"))).toBe(true);
+      // Real run: keep 1 ledger entry + 1 newest report (old-report pruned).
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", keep: 1 })).toBe(0);
+      expect(readToolRuns(registry).length).toBe(1);
+      expect(existsSync(join(agentsDir, "old-report.json"))).toBe(false);
+      expect(existsSync(join(agentsDir, "new-report.json"))).toBe(true);
+      // --age prunes by mtime: the remaining new report is old enough to go.
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", age: 0 })).toBe(0);
+      expect(existsSync(join(agentsDir, "new-report.json"))).toBe(false);
+      // Requiring a knob returns usage error.
+      expect(cmdTools({ registry, dirs, toolsAction: "gc" })).toBe(1);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("tools list --json merges each tool's audit risk", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "list", json: true })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      const tool = parsed.find((entry: { name: string }) => entry.name === "demo-skill__hello");
+      expect(tool).toBeTruthy();
+      expect(tool.risk).toBe("low");
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("MCP doctor tool", () => {
+  test("tools/list exposes doctor", async () => {
+    const res = await handleMessage({ jsonrpc: "2.0", id: 20, method: "tools/list", params: {} });
+    const names = res.result.tools.map((tool: { name: string }) => tool.name);
+    expect(names).toContain("doctor");
+  });
+
+  test("tools/call doctor reports a healthy ecosystem", async () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const res = await handleMessage({
+      jsonrpc: "2.0",
+      id: 21,
+      method: "tools/call",
+      params: { name: "doctor", arguments: { dirs, registry } },
+    });
+    expect(res.result.content[0].text).toContain('"ok": true');
+    expect(res.result.content[0].text).toContain("spec");
+  });
+
+  test("python twin exposes doctor and runs a healthy check", () => {
+    const code = "import json, sys; sys.path.insert(0, 'skill/scripts'); import mcp_server; print(json.dumps([t['name'] for t in mcp_server.TOOLS]))";
+    const names = JSON.parse(execFileSync(PY, ["-c", code], { encoding: "utf8" }).trim());
+    expect(names).toContain("doctor");
+    const base = join(tmpdir(), `sr-py-doctor-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const skillDir = join(base, ".agents", "skills", "demo-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n");
+    writeFileSync(join(skillDir, "scripts", "hello.py"), 'print("hi")\n');
+    writeFileSync(
+      join(regDir, "registry.json"),
+      JSON.stringify({ skills: [{ name: "demo-skill", path: skillDir, assets: [{ path: "scripts/hello.py", group: "scripts", language: "python" }] }] }),
+    );
+    const doctorCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, 'skill/scripts')",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('doctor', {})",
+      "print(json.loads(text)['ok'])",
+    ].join("; ");
+    const ok = execFileSync(PY, ["-c", doctorCode], { encoding: "utf8" }).trim();
+    expect(ok).toBe("True");
+  });
+
+  test("python twin doctor fails when the registry is missing", () => {
+    const base = join(tmpdir(), `sr-py-doctor-missing-${Date.now()}`);
+    bases.push(base);
+    mkdirSync(join(base, ".agents", "skills", ".parasite-skill"), { recursive: true });
+    const doctorCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, 'skill/scripts')",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('doctor', {})",
+      "print(json.loads(text)['ok'])",
+    ].join("; ");
+    const ok = execFileSync(PY, ["-c", doctorCode], { encoding: "utf8" }).trim();
+    expect(ok).toBe("False");
+  });
+});
+
+describe("export --public strips paths", () => {
+  test("public export keeps names but removes filesystem paths", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdExport({ registry, dirs, public: true })).toBe(0);
+      const eco = JSON.parse(readFileSync(join(registry, "ecosystem.json"), "utf-8"));
+      expect(eco.public).toBe(true);
+      expect(Object.hasOwn(eco.skills[0], "path")).toBe(false);
+      expect(eco.skills[0].name).toBe("demo-skill");
+      expect(eco.rules.global.every((entry: string) => !entry.includes("/") && !entry.includes("\\"))).toBe(true);
+      const md = readFileSync(join(registry, "ECOSYSTEM.md"), "utf-8");
+      expect(md).toContain("Public mode");
+      // The non-public export still carries paths.
+      expect(cmdExport({ registry, dirs })).toBe(0);
+      const full = JSON.parse(readFileSync(join(registry, "ecosystem.json"), "utf-8"));
+      expect(Object.hasOwn(full.skills[0], "path")).toBe(true);
+      expect(full.public).toBeUndefined();
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("sync dry-run and llm json trace", () => {
+  test("sync --push --dry-run previews without committing", () => {
+    const { base } = tempSkills({});
+    const syncRoot = join(base, ".agents", "skills");
+    mkdirSync(syncRoot, { recursive: true });
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: syncRoot, stdio: "ignore" });
+      writeFileSync(join(syncRoot, "note.txt"), "pending change\n");
+      const orig = console.log;
+      const out: string[] = [];
+      console.log = (...a) => out.push(a.join(" "));
+      try {
+        expect(cmdSync({ push: true, dryRun: true })).toBe(0);
+        const text = out.join("\n");
+        expect(text).toContain("push dry-run");
+        expect(text).toContain("note.txt");
+        // Nothing was staged or committed (works even on an unborn HEAD).
+        const status = execFileSync("git", ["status", "--porcelain"], { cwd: syncRoot, encoding: "utf8" }).trim();
+        expect(status).toContain("note.txt");
+        const commits = execFileSync("git", ["rev-list", "--count", "--all"], { cwd: syncRoot, encoding: "utf8" }).trim();
+        expect(commits).toBe("0");
+      } finally {
+        console.log = orig;
+      }
+    } catch {
+      // git unavailable — nothing to assert
+    }
+  });
+
+  test("llm --json returns a tool_calls trace", async () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hello from demo")\n',
+    });
+    const originalFetch = globalThis.fetch;
+    const bodies: any[] = [];
+    let calls = 0;
+    globalThis.fetch = async (_url: any, options: any) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      calls++;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "", tool_calls: [{ id: "call-1", type: "function", function: { name: "demo-skill__hello", arguments: "{}" } }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "final grounded answer" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(await cmdLlm({ request: "debug failing tests", endpoint: "http://localhost:1234/v1", model: "test-model", registry, dirs, maxChars: 200, json: true })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      expect(parsed.tool_calls).toHaveLength(1);
+      expect(parsed.tool_calls[0].name).toBe("demo-skill__hello");
+      expect(parsed.tool_calls[0].ok).toBe(true);
+      expect(parsed.tool_calls[0].status).toBe(0);
+      expect(parsed.tool_calls[0].dry_run).toBe(false);
+      expect(parsed.response).toBe("final grounded answer");
+    } finally {
+      console.log = orig;
+      globalThis.fetch = originalFetch;
     }
   });
 });

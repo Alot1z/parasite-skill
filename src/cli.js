@@ -46,11 +46,11 @@ COMMANDS
   mcp       MCP control: add|remove|list register/remove the parasite-skill MCP
             server in client configs (no manual config); bare mcp runs the server
   bundle    Build a tarball + install.json manifest for GitHub Pages distribution (--out, --meta)
-  sync      Cloud-sync the skills tree to a git remote (--init URL | --push | --pull)
+  sync      Cloud-sync the skills tree to a git remote (--init URL | --push | --pull | --status; --dry-run previews push/pull)
   agents    Generate AGENTS.md (default), list/show the agent profiles, or
             run <profile>/--all with a request
   graph     Emit a skill or typed ecosystem graph (--ecosystem, --json | --dot | --mmd, --top N, --threshold X)
-  tools     list|describe|run|run-batch|dry-run|audit|docs|policy|history
+  tools     list|describe|run|run-batch|dry-run|audit|verify|docs|policy|history|gc
             Callable AI-tools: skill scripts/hooks/tools as bounded, explicit,
             captured tools for the host LLM (--json)
   --version | --help  GLOBAL FLAGS
@@ -84,6 +84,7 @@ TOOLS FLAGS
   --policy-file PATH   tools policy: target a specific config file
   --skill G        tools list: filter tools by skill name glob
   --risk X         tools list: only tools at/above low|medium|high audit risk
+  --public         export: strip filesystem paths (names/metadata only)
   --max-tools N    agents run: cap the number of script tools executed
   --profiles a,b   agents run --all: run only these profiles
   --min-tools N    agents run: exit 1 when fewer than N tools succeeded
@@ -95,6 +96,8 @@ TOOLS FLAGS
   --history-status S  tools history: filter by status (ok|fail)
   --history-since ISO  tools history: only entries at/after this timestamp
   --history-until ISO  tools history: only entries at/before this timestamp
+  --age N          tools gc: prune agent reports/ledger entries older than N days
+  --keep N         tools gc: keep only the N most recent agent reports/ledger entries
   --strict         agents run: exit 2 if any selected tool is policy-blocked
   --baseline       tools audit: diff against the persisted risk baseline
   --write-baseline tools audit: seed the risk baseline file
@@ -213,6 +216,7 @@ COMMANDS
   docs                 Generate a TOOLS.md reference of the tool surface
   policy               Read or edit the project tools policy (see below)
   history              Show the local execution ledger (--clear to reset)
+  gc                   Prune stale registry artifacts (agent reports + ledger)
 
 FLAGS
   --args STR       Space-separated arguments appended to the tool command
@@ -233,6 +237,8 @@ FLAGS
   --history-since ISO  history: only entries at/after this timestamp
   --history-until ISO  history: only entries at/before this timestamp
   --limit N        history entries to show
+  --age N          gc: prune artifacts older than N days
+  --keep N         gc: keep only the N most recent artifacts
   --strict         agents run: exit 2 on policy-blocked tools
   --out PATH       docs: write TOOLS.md elsewhere (default registry/TOOLS.md)
   --json           Machine-readable output
@@ -399,6 +405,8 @@ export function parseFlags(argv) {
       case "--history-until": { const v = value(++i, a); if (v !== undefined) flags.historyUntil = v; break; }
       case "--names": { const v = value(++i, a); if (v !== undefined) flags.names = v; break; }
       case "--limit": { const v = value(++i, a); if (v !== undefined) flags.limit = num(v); break; }
+      case "--age": { const v = value(++i, a); if (v !== undefined) flags.age = num(v); break; }
+      case "--keep": { const v = value(++i, a); if (v !== undefined) flags.keep = num(v); break; }
       case "--env-filter": { const v = value(++i, a); if (v !== undefined) flags.envFilter = v; break; }
       case "--no-tools": flags.noTools = true; break;
       case "--max-tool-calls": { const v = value(++i, a); if (v !== undefined) flags.maxToolCalls = num(v); break; }

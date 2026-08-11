@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import { VERSION, loadRegistry, registryDir } from "./engine.js";
 import { auditSkillTools, filterToolsByPolicy, listSkillTools, renderToolsDocs, runSkillTool } from "./ai-tools.js";
 import {
+  cmdDoctor,
   cmdPlan,
   cmdCompose,
   cmdRefs,
@@ -121,6 +122,17 @@ const TOOLS = [
     },
   },
   {
+    name: "doctor",
+    description: "One-shot health check: spec validation + tool readiness + audit baseline diff + project config parse. Exits 1 on the first failing check.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dirs: { type: "string", description: "extra scan dirs, comma-separated" },
+        json: { type: "boolean", description: "machine-readable report (default true over MCP)" },
+      },
+    },
+  },
+  {
     name: "skill_tools_docs",
     description: "Return the TOOLS.md reference of the callable skill AI-tool surface (same content as `tools docs`).",
     inputSchema: {
@@ -205,6 +217,7 @@ function runTool(name, params = {}) {
         console.log(JSON.stringify({ threshold, tools: audits, flagged: audits.filter((entry) => levels.indexOf(entry.risk) >= minIndex).length }, null, 2));
         break;
       }
+      case "doctor": code = cmdDoctor({ ...ctx, json: params.json !== false }); break;
       case "skill_tools_docs": {
         const payload = loadRegistry(registryDir(ctx.registry), ctx.dirs, ctx.force);
         console.log(renderToolsDocs(payload, { allow: params.allow, deny: params.deny }));

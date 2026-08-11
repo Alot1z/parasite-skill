@@ -27,7 +27,12 @@ export function cmdSync(args) {
 
   const action = args.init ? "init" : args.push ? "push" : args.pull ? "pull" : args.status ? "status" : null;
   if (!action) {
-    console.error("usage: sync --init <repo-url> | --push | --pull | --status");
+    console.error("usage: sync --init <repo-url> | --push | --pull | --status [--dry-run]");
+    return 1;
+  }
+  const dryRun = args.dryRun === true;
+  if (dryRun && action !== "push" && action !== "pull") {
+    console.error("--dry-run only applies to sync --push / sync --pull");
     return 1;
   }
 
@@ -57,6 +62,26 @@ export function cmdSync(args) {
   }
 
   if (action === "push") {
+    if (dryRun) {
+      // Preview only: report exactly what a push would stage/commit, without
+      // touching the index, creating a commit, or contacting the remote.
+      try {
+        const staged = git(["add", "-A", "--dry-run"], root);
+        const changed = git(["status", "--porcelain"], root);
+        if (!changed) {
+          console.log(`${smallLogo()} push dry-run: nothing to push — skills tree unchanged`);
+          return 0;
+        }
+        console.log(`${smallLogo()} push dry-run: ${changed.split("\n").length} file(s) would be committed and pushed`);
+        for (const line of staged.split("\n").filter(Boolean)) console.log(`  ${line}`);
+        console.log("  (nothing staged, committed, or pushed — dry-run)");
+        return 0;
+      } catch (e) {
+        console.error(`push dry-run failed: ${e.message}`);
+        console.error("  (is this directory a sync repo? run: parasite-skill sync --init <repo-url>)");
+        return 1;
+      }
+    }
     git(["add", "-A"], root);
     const changed = git(["status", "--porcelain"], root);
     if (!changed) {
@@ -89,11 +114,24 @@ export function cmdSync(args) {
       } catch {
         /* unborn HEAD */
       }
+      if (dryRun) {
+        // `git fetch --dry-run` contacts the remote read-only and reports what
+        // a pull would bring in, without updating refs or the working tree.
+        const out = git(["fetch", "--dry-run", "origin", branch], root);
+        if (!out.trim()) {
+          console.log(`${smallLogo()} pull dry-run: up to date with origin/${branch}`);
+        } else {
+          console.log(`${smallLogo()} pull dry-run: changes would be fetched from origin/${branch}`);
+          for (const line of out.split("\n").filter(Boolean)) console.log(`  ${line}`);
+        }
+        console.log("  (no refs or files changed — dry-run)");
+        return 0;
+      }
       const out = git(["pull", "origin", branch], root);
       console.log(`${smallLogo()} pulled: ${out.split("\n").pop()}`);
       return 0;
     } catch (e) {
-      console.error(`pull failed: ${e.message}`);
+      console.error(`pull ${dryRun ? "dry-run " : ""}failed: ${e.message}`);
       return 1;
     }
   }

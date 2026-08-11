@@ -11,7 +11,10 @@
 //  tools policy                     read or edit the project tools policy in
 //                                   parasite-skill.json (allow/deny/env/timeoutMs/scoped)
 //  tools history [--name/--skill/--status]  audit ledger, filterable
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+//  tools gc [--age N] [--keep N]    prune stale registry artifacts (agent
+//                                   reports/dry-runs, oversized ledger);
+//                                   --dry-run previews without deleting
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { loadProjectConfig, loadRegistry, registryDir } from "../engine.js";
 import { auditSkillTools, clearToolRuns, filterToolsByPolicy, listSkillTools, readToolRuns, renderToolsDocs, resolveToolRun, runSkillTool } from "../ai-tools.js";
@@ -48,6 +51,11 @@ export function cmdTools(args = {}) {
   if (sub === "list") {
     let tools = filterToolsByPolicy(listSkillTools(payload), policy);
     const riskLevels = ["low", "medium", "high"];
+    // Join the static audit so every inventory entry carries its risk level.
+    // Computed lazily: only --risk filtering and --json output need it, so a
+    // plain `tools list` does not pay the per-asset read cost.
+    const needsRisk = !!args.listRisk || !!args.json;
+    const riskByName = needsRisk ? new Map(auditSkillTools(payload).map((entry) => [entry.name, entry.risk])) : null;
     if (args.listSkill) {
       const pattern = globToRegExp(args.listSkill);
       tools = tools.filter((tool) => pattern.test(tool.skill));
@@ -58,12 +66,10 @@ export function cmdTools(args = {}) {
         console.error("--risk must be one of low|medium|high");
         return 1;
       }
-      // Join the static audit so the caller can see only tools at/above a risk.
-      const riskByName = new Map(auditSkillTools(payload).map((entry) => [entry.name, entry.risk]));
       tools = tools.filter((tool) => riskLevels.indexOf(riskByName.get(tool.name) ?? "low") >= minIndex);
     }
     if (args.json) {
-      console.log(JSON.stringify(tools, null, 2));
+      console.log(JSON.stringify(tools.map((tool) => ({ ...tool, risk: riskByName?.get(tool.name) ?? "low" })), null, 2));
     } else {
       console.log(`callable skill tools: ${tools.length}`);
       for (const tool of tools) {
@@ -229,6 +235,93 @@ export function cmdTools(args = {}) {
       }
     }
     return broken ? 1 : 0;
+  }
+
+  if (sub === "gc") {
+    // Prune stale registry artifacts: agent report/dry-run files (by mtime)
+    // and the audit ledger (by entry timestamp). --age N keeps only artifacts
+    // younger than N days; --keep N keeps only the N most recent files/entries.
+    // --dry-run previews everything without deleting; --json is machine
+    // readable. At least one of --age/--keep must be given.
+    const ageDays = Number(args.age);
+    const keep = Number(args.keep);
+    const byAge = Number.isFinite(ageDays) && ageDays >= 0;
+    const byKeep = Number.isFinite(keep) && keep >= 0;
+    if (!byAge && !byKeep) {
+      console.error("tools gc requires --age N (days) and/or --keep N (count); add --dry-run to preview");
+      return 1;
+    }
+    const now = Date.now();
+    const dayMs = 86_400_000;
+    const dryRun = args.dryRun === true;
+    const removed = { agent_files: [], ledger_entries: 0, ledger_bytes: 0 };
+
+    // Agent reports + dry-runs live in registry/agents. Each file is pruned
+    // when older than --age days, or when it falls beyond the --keep newest.
+    const agentsDir = join(reg, "agents");
+    let reportFiles = [];
+    if (existsSync(agentsDir)) {
+      reportFiles = readdirSync(agentsDir)
+        .filter((name) => name.endsWith(".md") || name.endsWith(".json"))
+        .map((name) => {
+          const full = join(agentsDir, name);
+          try {
+            return { name, full, mtimeMs: statSync(full).mtimeMs };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+    }
+    let survivors = reportFiles;
+    if (byAge) survivors = survivors.filter((file) => now - file.mtimeMs <= ageDays * dayMs);
+    if (byKeep) survivors = survivors.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, keep);
+    const survivorSet = new Set(survivors.map((file) => file.full));
+    for (const file of reportFiles) {
+      if (!survivorSet.has(file.full)) {
+        removed.agent_files.push(file.name);
+        if (!dryRun) rmSync(file.full, { force: true });
+      }
+    }
+
+    // Audit ledger: read entries (oldest first), drop stale/overflowing ones,
+    // then rewrite the file with the survivors only.
+    const ledgerPath = join(reg, "tool-runs.jsonl");
+    const rawLines = existsSync(ledgerPath) ? readFileSync(ledgerPath, "utf-8").split("\n").filter(Boolean) : [];
+    const parsed = rawLines
+      .map((line, index) => {
+        try {
+          return { index, ts: Date.parse(JSON.parse(line).ts) || 0 };
+        } catch {
+          return { index, ts: 0 };
+        }
+      })
+      .sort((a, b) => a.index - b.index);
+    let keptLines = parsed;
+    if (byAge) keptLines = keptLines.filter((entry) => now - entry.ts <= ageDays * dayMs);
+    if (byKeep) keptLines = keptLines.slice(-keep);
+    const keptIndexes = new Set(keptLines.map((entry) => entry.index));
+    const dropped = rawLines.filter((_, index) => !keptIndexes.has(index));
+    removed.ledger_entries = dropped.length;
+    removed.ledger_bytes = dropped.reduce((n, line) => n + Buffer.byteLength(line) + 1, 0);
+    if (dropped.length && !dryRun) {
+      writeFileSync(ledgerPath, rawLines.filter((_, index) => keptIndexes.has(index)).join("\n") + (keptIndexes.size ? "\n" : ""), "utf-8");
+    }
+
+    const totals = { agent_files: removed.agent_files.length, ledger_entries: removed.ledger_entries };
+    if (args.json) {
+      console.log(JSON.stringify({ dry_run: dryRun, removed, totals }, null, 2));
+    } else if (dryRun) {
+      console.log(`tools gc dry-run (${byAge ? `age < ${ageDays}d, ` : ""}${byKeep ? `keep ${keep} newest` : ""}):`);
+      if (!totals.agent_files && !totals.ledger_entries) console.log("  nothing to prune");
+      for (const name of removed.agent_files) console.log(`  - agent report: ${name}`);
+      if (removed.ledger_entries) console.log(`  - ledger: ${removed.ledger_entries} entries (${removed.ledger_bytes} bytes)`);
+      console.log("  nothing deleted (--dry-run)");
+    } else {
+      console.log(`tools gc: pruned ${totals.agent_files} agent report(s), ${totals.ledger_entries} ledger entry(ies)`);
+      for (const name of removed.agent_files) console.log(`  - ${name}`);
+    }
+    return 0;
   }
 
   if (sub === "history") {
@@ -505,6 +598,6 @@ export function cmdTools(args = {}) {
     }
   }
 
-  console.error("tools action must be list, describe, run, run-batch, dry-run, audit, verify, docs, policy, or history");
+  console.error("tools action must be list, describe, run, run-batch, dry-run, audit, verify, docs, policy, history, or gc");
   return 1;
 }

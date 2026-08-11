@@ -128,6 +128,7 @@ TOOLS = [
     {"name": "skill_tools_audit", "description": "Static risk audit of discovered skill AI-tools (eval/subprocess/network/secrets patterns). Never executes anything.", "inputSchema": {"type": "object", "properties": {"threshold": {"type": "string"}}}},
     {"name": "skill_tools_docs", "description": "Return a TOOLS.md-style reference of the callable skill AI-tool surface.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "skill_tools_run", "description": "Explicitly execute one skill AI-tool. Bounded, captured, and redacted; never runs automatically.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "args": {"type": "string"}, "timeout_ms": {"type": "number"}, "allow": {"type": "array", "items": {"type": "string"}}, "deny": {"type": "array", "items": {"type": "string"}}, "env": {"type": "array", "items": {"type": "string"}}}, "required": ["name"]}},
+    {"name": "doctor", "description": "One-shot health check: registry loads, spec validation, callable-tool count. Exits 1 on the first failing check.", "inputSchema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -469,6 +470,56 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         print(json.dumps(result, indent=2))
         return 0 if status == 0 else 1
 
+    def do_doctor():
+        # Python-twin health check: registry loads, spec validation, and a
+        # callable-tool count. JS-only checks (tools verify, audit baseline,
+        # project-config parse) are served by the JS twin / `doctor` CLI.
+        out = []
+        failed = 0
+
+        def fail(check: str, detail: str):
+            nonlocal failed
+            out.append({"check": check, "ok": False, "detail": detail})
+            failed += 1
+
+        def ok(check: str, detail: str):
+            out.append({"check": check, "ok": True, "detail": detail})
+
+        # 1. Registry file exists and loads.
+        if not Path(reg, "registry.json").exists():
+            fail("registry", f"no registry.json at {reg} — run scan first")
+            payload = {"skills": []}
+        else:
+            try:
+                payload = load_registry(reg, extra, force=True)
+            except Exception as err:  # noqa: BLE001
+                fail("registry", str(err))
+                payload = {"skills": []}
+            else:
+                ok("registry", f"registry loaded from {reg}")
+
+        # 2. Spec validation.
+        bad = [s for s in payload.get("skills", []) if not s.get("spec_ok")]
+        if bad:
+            fail("spec", f"{len(bad)} skill(s) with spec issues: {', '.join(s['name'] for s in bad)}")
+        else:
+            ok("spec", f"{len(payload.get('skills', []))} skill(s) spec-valid")
+
+        # 3. Callable-tool readiness (mirrors skill_tools_list discovery).
+        runnable = {".py": "python", ".js": "node", ".mjs": "node", ".cjs": "node", ".sh": "bash", ".bash": "bash"}
+        count = 0
+        for skill in payload.get("skills", []):
+            for asset in skill.get("assets", []):
+                if asset.get("group") not in ("scripts", "hooks", "tools"):
+                    continue
+                ext = asset.get("path", "")[asset.get("path", "").rfind("."):].lower()
+                if ext in runnable:
+                    count += 1
+        ok("tools", f"{count} callable tool(s) discovered")
+
+        print(json.dumps({"ok": failed == 0, "failed": failed, "checks": out}, indent=2))
+        return 0 if failed == 0 else 1
+
     handlers = {
         "scan": do_scan,
         "validate": do_validate,
@@ -484,6 +535,7 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         "skill_tools_audit": do_skill_tools_audit,
         "skill_tools_docs": do_skill_tools_docs,
         "skill_tools_run": do_skill_tools_run,
+        "doctor": do_doctor,
     }
     fn = handlers.get(name)
     if fn is None:

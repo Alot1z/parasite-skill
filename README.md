@@ -91,6 +91,8 @@ parasite-skill tools history                        # audit ledger of executed t
 parasite-skill tools history --name "demo*" --status fail   # filter the ledger
 parasite-skill tools history --since 2026-01-01T00:00:00Z --until 2026-02-01T00:00:00Z
 parasite-skill tools history --clear                # reset the ledger
+parasite-skill tools gc --age 30 --dry-run          # preview pruning stale artifacts
+parasite-skill tools gc --keep 20                   # keep only the newest 20 reports/entries
 ```
 
 `tools verify` checks every discovered tool (script exists, policy status,
@@ -100,7 +102,11 @@ the expected per-tool risk, and `tools audit --baseline` diffs against it,
 exiting 1 when any tool regressed to a higher risk level. `tools history`
 filters the ledger by tool-name glob (`--name`), skill glob (`--skill`),
 status (`--status ok|fail`), or a time window (`--since`/`--until` ISO
-timestamps) — "what ran in the last hour?" is one command.
+timestamps) — "what ran in the last hour?" is one command. `tools gc` prunes
+stale registry artifacts (agent report/dry-run files by mtime, ledger entries
+by timestamp) with `--age N` days and/or `--keep N` newest — `--dry-run`
+previews exactly what would be deleted, nothing is removed until you drop the
+flag.
 
 Skills can declare per-tool metadata in their `SKILL.md` frontmatter as a
 `tools:` JSON block keyed by tool name or asset path — overriding the
@@ -171,12 +177,15 @@ structured args against the tool's declared `argsSchema` (exit 3 on invalid),
 and `--tool-env KEY=VALUE,...` injects inline env overrides for that run.
 `tools run-batch a,b --json-args '{"tool-a__x": {"port": 8080}, "tool-b__y": {}}'`
 accepts a per-tool map so each tool in the batch is validated against its own
-schema. `export` records the active tools policy (names/keys only) in
-`ecosystem.json` so the AI layer knows the execution gate without rescanning —
-and now also a `tools` array (tool name, owning skill, language, static-audit
-risk, declared timeout, schema presence) plus a `callable_tools` count, so the
-AI layer sees the whole executable surface and its risk posture from the
-export alone.
+schema. `tools list --json` now merges each tool's static-audit `risk` level
+into the inventory, so a scripted caller sees the whole executable surface and
+its risk posture in one JSON blob. `export` records the active tools policy
+(names/keys only) in `ecosystem.json` so the AI layer knows the execution gate
+without rescanning — and now also a `tools` array (tool name, owning skill,
+language, static-audit risk, declared timeout, schema presence) plus a
+`callable_tools` count. `export --public` strips filesystem paths (skills,
+clients, extensions, MCP files, rules, project config) for sharing, mirroring
+`graph --ecosystem --public`.
 
 ## Auto-max routing
 
@@ -338,6 +347,27 @@ parasite-skill history import --file ./exported-transcript.json
 ```
 
 The command does not scrape chat history automatically. It reads only a selected file, bounds the read, redacts common secrets, paths, and email addresses, and never modifies the original.
+
+## Cloud sync and LLM traces
+
+Back up or restore the whole skills tree to a git remote, or preview without
+side effects:
+
+```bash
+parasite-skill sync --init https://github.com/you/parasite-skill-sync.git
+parasite-skill sync --push --dry-run    # list what a push would commit, change nothing
+parasite-skill sync --pull --dry-run    # fetch --dry-run: report remote changes, touch nothing
+parasite-skill sync --push
+```
+
+`llm --json` additionally returns a `tool_calls` trace — every tool the model
+requested, whether it executed (or was only dry-run previewed), its exit
+status, and duration — so scripted callers can audit model behavior without
+parsing the chat response.
+
+MCP hosts get the same health check as the CLI: both twins now expose a
+`doctor` tool (registry load, spec validation, tool readiness, and — in the
+JavaScript twin — the audit-baseline diff and project-config parse).
 
 ## GitHub Pages distribution
 

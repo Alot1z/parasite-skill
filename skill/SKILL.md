@@ -66,6 +66,9 @@ parasite-skill tools verify                       # readiness: scripts/policy/sc
 parasite-skill tools docs                         # generate registry/TOOLS.md
 parasite-skill tools policy --allow "a__*" --deny "b__*" [--dry-run]
 parasite-skill tools history [--clear] [--name G] [--skill G] [--status ok|fail] [--since ISO] [--until ISO]
+parasite-skill tools gc [--age N] [--keep N] [--dry-run]  # prune stale reports/ledger
+parasite-skill export [--public]                   # strip filesystem paths
+parasite-skill sync --push|--pull [--dry-run]      # preview without side effects
 parasite-skill agents list|show <profile>          # inspect profiles, no run
 parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run] [--strict] [--min-tools N] [--json]
 parasite-skill agents run --all "<request>" [--profiles a,b]   # all or a subset
@@ -92,10 +95,17 @@ executing and writes `agents/<profile>-<request>.dryrun.md` + `.json` preview
 reports; `--strict` turns any policy-blocked tool into a hard failure
 (exit 2); `--min-tools N` gates on success count, `--all --profiles a,b`
 runs a subset, and `--json` prints the report to stdout for scripts/CI.
-`tools history --since/--until` filters the ledger by time window. `doctor`
-runs the same gates as CI in one command: spec validation, tool readiness,
-audit baseline, and project-config parse. `export` includes a `tools` array
-(name/skill/language/risk) so the AI layer knows the executable surface.
+`tools history --since/--until` filters the ledger by time window. `tools gc`
+prunes stale agent reports and ledger entries by age (`--age N` days) or count
+(`--keep N` newest), with `--dry-run` previewing deletions. `doctor` runs the
+same gates as CI in one command: spec validation, tool readiness, audit
+baseline, and project-config parse — and is also exposed to MCP hosts as a
+`doctor` tool in both twins. `export` includes a `tools` array
+(name/skill/language/risk) so the AI layer knows the executable surface, and
+`export --public` strips filesystem paths for sharing. `sync --push/--pull
+--dry-run` previews what a push would commit or a pull would fetch without
+changing anything. `llm --json` returns a `tool_calls` trace (name, status,
+duration, dry-run flag) alongside the model's answer.
 `tools audit --write-baseline` persists expected per-tool risk and
 `--baseline` exits 1 on drift/regression; `tools verify` checks scripts,
 policy, and schema shape (exit 1 when broken); `tools history` filters the
@@ -103,7 +113,8 @@ ledger by name/skill/status. `refs` pages list each skill's callable AI-tools,
 and `compose` includes the callable tools per selected skill. `trace <file|dir>`
 aggregates skill mentions plus ledger tool runs (`--json` for the AI layer).
 `llm` exposes tools as native functions, presents declared schemas to the
-model, and executes tool calls in a bounded loop.
+model, and executes tool calls in a bounded loop; `--json` includes the
+`tool_calls` trace of what the model requested and how each call resolved.
 
 ## Always-on cadence
 

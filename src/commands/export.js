@@ -13,7 +13,7 @@ import { CLIENTS, SKILL_NAME } from "../clients.js";
 import { getInjectionStatus } from "../parasite/index.js";
 import { mcpRegistrationStatus } from "../mcp-register.js";
 import { AGENT_PROFILES } from "../data/agent-profiles.js";
-import { buildEcosystemGraph } from "../ecosystem-graph.js";
+import { buildEcosystemGraph, publicGraph } from "../ecosystem-graph.js";
 import { auditSkillTools, listSkillTools } from "../ai-tools.js";
 import { fmt } from "./_lib.js";
 
@@ -55,30 +55,33 @@ export function cmdExport(args) {
   const skills = payload.skills;
   const sets = loadSetsWithProject(reg, args.sets);
   const home = homedir();
+  // --public mirrors graph --public: strip filesystem paths and keep names /
+  // metadata only, so the export can be shared without leaking local layout.
+  const isPublic = args.public === true;
+  const basename = (value) => String(value ?? "").replace(/\\/g, "/").split("/").pop() || null;
 
   // ---- clients inventory ---------------------------------------------------
   const clients = [];
   for (const c of CLIENTS) {
     const dest = join(c.user, SKILL_NAME);
     const installed = existsSync(dest);
-    clients.push({
+    const entry = {
       id: c.id,
       label: c.label,
       installed,
       mode: installed ? (isLink(dest) ? "link" : "copy") : null,
-      path: dest.replace(/\\/g, "/"),
-    });
+    };
+    if (!isPublic) entry.path = dest.replace(/\\/g, "/");
+    clients.push(entry);
   }
   const installedCount = clients.filter((c) => c.installed).length;
 
   // ---- parasite extensions -------------------------------------------------
-  const extensions = getInjectionStatus().map((e) => ({
-    client: e.client,
-    label: e.label,
-    injections: e.injections,
-    active: e.active,
-    path: String(e.path || "").replace(/\\/g, "/"),
-  }));
+  const extensions = getInjectionStatus().map((e) => {
+    const entry = { client: e.client, label: e.label, injections: e.injections, active: e.active };
+    if (!isPublic) entry.path = String(e.path || "").replace(/\\/g, "/");
+    return entry;
+  });
 
   // ---- MCP registrations ---------------------------------------------------
   const mcp = mcpRegistrationStatus();
@@ -102,7 +105,7 @@ export function cmdExport(args) {
   const project = loadProjectConfig();
   const projectInfo = project
     ? {
-        path: project._path.replace(/\\/g, "/"),
+        ...(isPublic ? { path: basename(project._path) } : { path: project._path.replace(/\\/g, "/") }),
         sets: Object.keys(project.sets ?? {}),
         enabledSets: Array.isArray(project.enabledSets) ? project.enabledSets : [],
         excludeSkills: Array.isArray(project.excludeSkills) ? project.excludeSkills : [],
@@ -155,36 +158,60 @@ export function cmdExport(args) {
       rule_files: globalRules.length,
       callable_tools: toolInventory.length,
     },
-    skills: skills.map((s) => ({
-      name: s.name,
-      description: s.description,
-      tags: s.tags,
-      languages: s.languages,
-      spec_ok: s.spec_ok,
-      path: String(s.path || "").replace(/\\/g, "/"),
-      sets: Object.entries(sets).filter(([, set]) => set.members.includes(s.name)).map(([n]) => n),
-    })),
+    skills: skills.map((s) => {
+      const entry = {
+        name: s.name,
+        description: s.description,
+        tags: s.tags,
+        languages: s.languages,
+        spec_ok: s.spec_ok,
+        sets: Object.entries(sets).filter(([, set]) => set.members.includes(s.name)).map(([n]) => n),
+      };
+      if (!isPublic) entry.path = String(s.path || "").replace(/\\/g, "/");
+      return entry;
+    }),
     sets: Object.fromEntries(
       Object.entries(sets).map(([name, set]) => [name, { desc: set.desc, members: set.members, project: !!set.project }]),
     ),
     clients,
     extensions,
-    mcp,
-    rules: { global: globalRules, per_client: perClientRules },
+    mcp: isPublic
+      ? mcp.map((m) => ({ label: m.label, registered: m.registered }))
+      : mcp,
+    rules: {
+      global: isPublic ? globalRules.map((rel) => basename(rel)).filter(Boolean) : globalRules,
+      per_client: isPublic ? perClientRules.map((rel) => basename(rel)).filter(Boolean) : perClientRules,
+    },
     agents: AGENT_PROFILES,
     tools: toolInventory,
-    graph: buildEcosystemGraph({
-      skills,
-      sets,
-      clients,
-      extensions,
-      mcp,
-      rules: { global: globalRules, per_client: perClientRules },
-      profiles: AGENT_PROFILES,
-      tools: listSkillTools(payload),
-    }),
+    graph: isPublic
+      ? publicGraph(
+          buildEcosystemGraph({
+            skills,
+            sets,
+            clients,
+            extensions,
+            mcp,
+            rules: { global: globalRules, per_client: perClientRules },
+            profiles: AGENT_PROFILES,
+            tools: listSkillTools(payload),
+          }),
+        )
+      : buildEcosystemGraph({
+          skills,
+          sets,
+          clients,
+          extensions,
+          mcp,
+          rules: { global: globalRules, per_client: perClientRules },
+          profiles: AGENT_PROFILES,
+          tools: listSkillTools(payload),
+        }),
     project_config: projectInfo,
-    note: "Paths and names only — no file contents or secrets. Regenerate with: parasite-skill export",
+    ...(isPublic ? { public: true } : {}),
+    note: isPublic
+      ? "Public-safe export: filesystem paths stripped, names/metadata only. Regenerate with: parasite-skill export --public"
+      : "Paths and names only — no file contents or secrets. Regenerate with: parasite-skill export",
   };
   mkdirSync(reg, { recursive: true });
   writeFileSync(join(reg, "ecosystem.json"), JSON.stringify(llm, null, 2));
@@ -198,7 +225,12 @@ export function cmdExport(args) {
       `${llm.counts.extensions} runtime extensions · ${llm.counts.mcp_registered} MCP registrations · ${globalRules.length} rule files.**`,
     "",
   );
-  md.push("Paths and names only — no contents, no secrets. Regenerate anytime: `parasite-skill export`", "");
+  md.push(
+    isPublic
+      ? "**Public mode:** filesystem paths stripped — names and metadata only."
+      : "Paths and names only — no contents, no secrets. Regenerate anytime: `parasite-skill export`",
+    "",
+  );
 
   md.push("## Skills", "", `| Skill | Tags | Languages | Spec | Sets |`, `|---|---|---|---|---|`);
   for (const s of skills) {
@@ -222,7 +254,7 @@ export function cmdExport(args) {
 
   md.push("## Clients", "", `| Client | Installed | Mode | Path |`, `|---|---|---|---|`);
   for (const c of clients) {
-    md.push(`| ${c.label} | ${c.installed ? "yes" : "-"} | ${c.mode ?? "-"} | ${c.path} |`);
+    md.push(`| ${c.label} | ${c.installed ? "yes" : "-"} | ${c.mode ?? "-"} | ${isPublic ? (c.installed ? "present" : "-") : c.path} |`);
   }
   md.push("");
 
@@ -239,12 +271,13 @@ export function cmdExport(args) {
   md.push("## Agent Profiles", "", ...Object.entries(AGENT_PROFILES).map(([name, profile]) => `- **${name}** — ${profile.desc}`), "");
 
   md.push("## MCP Registrations", "", `| Target | Registered | File |`, `|---|---|---|`);
-  for (const m of mcp) md.push(`| ${m.label} | ${m.registered ? "yes" : "-"} | ${m.file} |`);
+  for (const m of mcp) md.push(`| ${m.label} | ${m.registered ? "yes" : "-"} | ${isPublic ? (m.registered ? "present" : "-") : m.file} |`);
   md.push("");
 
   md.push("## Rules & Configs (existence only)", "");
-  if (globalRules.length) md.push("### Global", "", ...globalRules.map((p) => `- ${p}`), "");
-  if (perClientRules.length) md.push("### Per-client skill installs", "", ...perClientRules.map((p) => `- ${p}`), "");
+  const ruleMd = isPublic ? globalRules.map((p) => `- ${basename(p)}`) : globalRules.map((p) => `- ${p}`);
+  if (globalRules.length) md.push("### Global", "", ...ruleMd, "");
+  if (perClientRules.length) md.push("### Per-client skill installs", "", ...(isPublic ? perClientRules.map((p) => `- ${basename(p)}`) : perClientRules.map((p) => `- ${p}`)), "");
   if (projectInfo) {
     md.push("### Project config", `- ${projectInfo.path}`, "");
     md.push(`  - sets: ${projectInfo.sets.join(", ") || "none"}`);
