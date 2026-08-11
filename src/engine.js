@@ -8,6 +8,10 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { LANG_EXT, TAG_RULES } from "./data/tags.js";
+import { SETS as SETS_DATA } from "./data/sets.js";
+
+export const SETS = SETS_DATA;
 
 export const VERSION = "1.0.0";
 export const REGISTRY_NAME = ".skill-router";
@@ -21,53 +25,10 @@ export const STOPWORDS = new Set(
     "user users request idea text skill skills need needs want wants help").split(" "),
 );
 
-export const TAG_RULES = {
-  security: ["security", "secure", "secret", "auth", "owasp", "vulnerab", "hardening", "privacy", "gitleaks"],
-  performance: ["perform", "fast", "optim", "latency", "cache", "speed", "bottleneck", "scale"],
-  frontend: ["frontend", "ui", "css", "html", "react", "component", "accessib", "design", "theme", "canvas", "art", "favicon", "typography"],
-  browser: ["browser", "playwright", "devtools", "web", "dom", "console", "screenshot", "chrome", "network"],
-  testing: ["test", "tdd", "red-green", "verif", "qa", "regression"],
-  debugging: ["debug", "fix", "error", "bug", "root-cause", "trace", "localize", "reproduce"],
-  research: ["documentation", "research", "wiki", "find", "retriev", "search", "source", "docs", "official"],
-  api: ["api", "mcp", "rest", "graphql", "endpoint", "sdk", "connector", "openapi", "interface", "integration", "schema"],
-  git: ["git", "commit", "branch", "worktree", "version", "ci", "cd", "deploy", "release", "pipeline", "action", "rollback"],
-  planning: ["plan", "spec", "task", "breakdown", "requirement", "story", "roadmap", "acceptance"],
-  docs: ["doc", "readme", "adr", "write", "content", "prose", "guide", "manual", "communicat", "report"],
-  automation: ["autom", "cli", "script", "launcher", "pinokio", "computer", "desktop", "mcp", "orchestr"],
-  data: ["pdf", "docx", "pptx", "slide", "form", "table", "extract", "convert"],
-  thinking: ["think", "reason", "decompos", "logic", "proposition", "clarif", "question", "interview", "doubt", "sequential", "tractatus", "cognitive"],
-  codebase: ["codebase", "graph", "symbol", "architect", "module", "dependency", "knip", "unused", "refactor", "smell", "callers", "impact"],
-};
-
-export const LANG_EXT = {
-  ".py": "python", ".pyw": "python",
-  ".ts": "typescript", ".mts": "typescript", ".tsx": "typescript",
-  ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript", ".jsx": "javascript",
-  ".go": "go", ".rs": "rust", ".java": "java", ".kt": "kotlin", ".kts": "kotlin",
-  ".rb": "ruby", ".php": "php", ".sh": "shell", ".bash": "shell", ".zsh": "shell",
-  ".ps1": "powershell", ".c": "c/c++", ".h": "c/c++", ".cpp": "c/c++", ".hpp": "c/c++",
-  ".cc": "c/c++", ".cs": "csharp", ".swift": "swift", ".zig": "zig", ".lua": "lua",
-  ".r": "r", ".sql": "sql",
-};
-
-export const SETS = {
-  thinking: { desc: "Decompose, reason, doubt", members: ["tractatus-thinking", "sequential-thinking", "7-scared-circle-clarity", "debug-thinking", "doubt-driven-development"] },
-  research: { desc: "Verify against real sources", members: ["deepwiki", "context7", "find-docs", "web-reader", "research", "gitingest", "source-driven-development"] },
-  planning: { desc: "Idea -> spec -> tasks", members: ["interview-me", "brainstorming", "idea-refine", "spec-driven-development", "writing-plans", "planning-and-task-breakdown", "story-quality"] },
-  build: { desc: "Implement in slices", members: ["incremental-implementation", "api-and-interface-design", "system-connector", "mcp-builder", "tdd", "test-driven-development", "autonomous-implementation-pattern"] },
-  docs: { desc: "Write + keep docs honest", members: ["documentation-writer", "documentation-and-adrs", "readme-skill", "api-docs-skill", "internal-comms", "stop-slop", "docx", "pdf", "pptx"] },
-  review: { desc: "Gate before merge", members: ["code-review-and-quality", "code-review-graph", "code-simplification", "verification-before-completion"] },
-  frontend: { desc: "UI that actually works", members: ["frontend-design", "frontend-ui-engineering", "theme-factory", "artifacts-builder", "favicon", "browser-testing-with-devtools", "webapp-testing", "playwright-cli", "agent-browser"] },
-  ops: { desc: "Ship safely", members: ["git-workflow-and-versioning", "using-git-worktrees", "ci-cd-and-automation", "github-actions-docs", "shipping-and-launch", "observability-and-instrumentation", "security-and-hardening"] },
-  intelligence: { desc: "Understand the codebase", members: ["ix", "understand", "code-review-graph", "graphify", "improve-codebase-architecture", "knip"] },
-};
-
 // ---------------------------------------------------------------- paths
 
 export function registryDir(override) {
-  const d = override
-    ? override
-    : join(HOME, ".agents", "skills", REGISTRY_NAME);
+  const d = override ? override : join(HOME, ".agents", "skills", REGISTRY_NAME);
   mkdirSync(d, { recursive: true });
   return d;
 }
@@ -144,6 +105,7 @@ export function stem(w) {
     for (const suf of ["ing", "ed", "es"]) {
       if (w.endsWith(suf)) {
         let base = w.slice(0, -suf.length);
+        // collapse doubled final consonant (debugging -> debug, running -> run)
         if (base.length > 2 && base.at(-1) === base.at(-2)) base = base.slice(0, -1);
         return base;
       }
@@ -271,6 +233,7 @@ export function loadRegistry(registry, extraDirs, force) {
 
 // ---------------------------------------------------------------- scoring
 
+// Public API: returns { scored, setScores } where setScores is an array of [setName, totalScore] for every skill-set (NOT a list of set names).
 export function scoreIdea(payload, idea) {
   const skills = payload.skills;
   const n = Math.max(skills.length, 1);
@@ -290,11 +253,15 @@ export function scoreIdea(payload, idea) {
     if (score > 0) scored.push([s.name, Math.round(score * 100) / 100]);
   }
   scored.sort((a, b) => b[1] - a[1]);
-  const setScores = Object.entries(SETS)
+  return { scored, setScores: bestSets(skills, scored) };
+}
+
+export function bestSets(skills, scored) {
+  const names = new Set(skills.map((s) => s.name));
+  return Object.entries(SETS)
     .map(([sn, { members }]) => [
       sn,
-      Math.round(scored.filter(([nm]) => members.includes(nm)).reduce((a, [, sc]) => a + sc, 0) * 100) / 100,
+      Math.round(scored.filter(([nm]) => members.includes(nm) && names.has(nm)).reduce((a, [, sc]) => a + sc, 0) * 100) / 100,
     ])
     .sort((a, b) => b[1] - a[1]);
-  return { scored, setScores };
 }

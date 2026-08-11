@@ -1,5 +1,7 @@
 // Multi-client support: where each AI coding client keeps its skills.
-// Paths verified against agentskills.io/specification and vercel-labs/skills.
+// Paths for the first 12 are verified against agentskills.io/specification and
+// vercel-labs/skills. Extra clients use best-effort conventions (verified:false)
+// and only activate when their directories actually exist on the machine.
 import {
   cpSync,
   existsSync,
@@ -19,19 +21,35 @@ const homeBase = () => process.env.SKILL_ROUTER_HOME ?? homedir();
 
 const H = homeBase;
 
+const v = (id, label, user, project) => ({ id, label, user, project, verified: true });
+const b = (id, label, user, project) => ({ id, label, user, project, verified: false });
+
 export const CLIENTS = [
-  { id: "claude-code", label: "Claude Code", user: join(H(), ".claude", "skills"), project: join(".claude", "skills") },
-  { id: "codex", label: "Codex CLI", user: join(H(), ".codex", "skills"), project: join(".agents", "skills") },
-  { id: "opencode", label: "OpenCode", user: join(H(), ".config", "opencode", "skills"), project: join(".agents", "skills") },
-  { id: "cline", label: "Cline", user: join(H(), ".agents", "skills"), project: join(".agents", "skills") },
-  { id: "cursor", label: "Cursor", user: join(H(), ".cursor", "skills"), project: join(".agents", "skills") },
-  { id: "windsurf", label: "Windsurf", user: join(H(), ".codeium", "windsurf", "skills"), project: join(".windsurf", "skills") },
-  { id: "gemini-cli", label: "Gemini CLI", user: join(H(), ".gemini", "skills"), project: join(".agents", "skills") },
-  { id: "warp", label: "Warp", user: join(H(), ".agents", "skills"), project: join(".agents", "skills") },
-  { id: "github-copilot", label: "GitHub Copilot CLI", user: join(H(), ".copilot", "skills"), project: join(".agents", "skills") },
-  { id: "continue", label: "Continue", user: join(H(), ".continue", "skills"), project: join(".continue", "skills") },
-  { id: "zed", label: "Zed", user: join(H(), ".agents", "skills"), project: join(".agents", "skills") },
-  { id: "universal", label: "Universal (~/.agents/skills)", user: join(H(), ".agents", "skills"), project: join(".agents", "skills") },
+  v("claude-code", "Claude Code", join(H(), ".claude", "skills"), join(".claude", "skills")),
+  v("codex", "Codex CLI", join(H(), ".codex", "skills"), join(".agents", "skills")),
+  v("opencode", "OpenCode", join(H(), ".config", "opencode", "skills"), join(".agents", "skills")),
+  v("cline", "Cline", join(H(), ".agents", "skills"), join(".agents", "skills")),
+  v("cursor", "Cursor", join(H(), ".cursor", "skills"), join(".agents", "skills")),
+  v("windsurf", "Windsurf", join(H(), ".codeium", "windsurf", "skills"), join(".windsurf", "skills")),
+  v("gemini-cli", "Gemini CLI", join(H(), ".gemini", "skills"), join(".agents", "skills")),
+  v("warp", "Warp", join(H(), ".agents", "skills"), join(".agents", "skills")),
+  v("github-copilot", "GitHub Copilot CLI", join(H(), ".copilot", "skills"), join(".agents", "skills")),
+  v("continue", "Continue", join(H(), ".continue", "skills"), join(".continue", "skills")),
+  v("zed", "Zed", join(H(), ".agents", "skills"), join(".agents", "skills")),
+  v("universal", "Universal (~/.agents/skills)", join(H(), ".agents", "skills"), join(".agents", "skills")),
+  b("roo-code", "Roo Code", join(H(), ".roo", "skills"), join(".roo", "skills")),
+  b("kilocode", "Kilo Code", join(H(), ".kilo", "skills"), join(".kilo", "skills")),
+  b("antigravity", "Antigravity", join(H(), ".antigravity", "skills"), join(".antigravity", "skills")),
+  b("openhands", "OpenHands", join(H(), ".openhands", "skills"), join(".openhands", "skills")),
+  b("pi", "Pi", join(H(), ".config", "pi", "skills"), join(".agents", "skills")),
+  b("kimi-code", "Kimi Code", join(H(), ".kimi", "skills"), join(".kimi", "skills")),
+  b("trae", "Trae", join(H(), ".trae", "skills"), join(".trae", "skills")),
+  b("qwen-code", "Qwen Code", join(H(), ".qwen-code", "skills"), join(".qwen-code", "skills")),
+  b("codebuddy", "CodeBuddy", join(H(), ".codebuddy", "skills"), join(".codebuddy", "skills")),
+  b("goose", "Goose", join(H(), ".goose", "skills"), join(".goose", "skills")),
+  b("amp", "Amp", join(H(), ".amp", "skills"), join(".amp", "skills")),
+  b("kiro", "Kiro CLI", join(H(), ".kiro", "skills"), join(".kiro", "skills")),
+  b("devin", "Devin for Terminal", join(H(), ".devin", "skills"), join(".devin", "skills")),
 ];
 
 export function skillSourceDir() {
@@ -179,7 +197,8 @@ export function runList() {
     if (existsSync(dest)) {
       const link = isLink(dest) ? "link" : "copy";
       const ok = verify(dest);
-      console.log(`  [${ok ? "ok" : "MISSING SKILL.md"}] ${c.label} (${link}) -> ${dest.replace(/\\/g, "/")}`);
+      const pathMark = c.verified ? "" : " (best-effort path)";
+      console.log(`  [${ok ? "ok" : "MISSING SKILL.md"}] ${c.label} (${link})${pathMark} -> ${dest.replace(/\\/g, "/")}`);
       found++;
     }
   }
