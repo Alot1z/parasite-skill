@@ -98,10 +98,13 @@ parasite-skill tools gc --keep 20                   # keep only the newest 20 re
 `tools gc` honors a project **GC TTL policy** when no CLI knobs are given — put
 `"gc": { "ageDays": 30, "keep": 20, "auto": true }` in `parasite-skill.json`
 and every `tools gc` (and `doctor`) uses it as the default, so scheduled
-cleanup can be expressed in config instead of remembering flags. `doctor`
-reports the policy posture as a check — and when the policy declares
-`"auto": true` (safe to run unattended), stale artifacts under the policy
-become a *failing* doctor check so CI catches a missed TTL sweep. `export`
+cleanup can be expressed in config instead of remembering flags. When the
+policy declares `"auto": true` (safe to run unattended), the sweep also runs
+automatically at the `scan`, `export`, and `doctor` entry points — stale
+artifacts are pruned on the spot, so they never accumulate between manual
+runs. `doctor` reports the policy posture as a check — and because it
+self-heals first, stale artifacts remaining *after* the auto sweep are a
+*failing* doctor check, so CI catches a genuinely stuck TTL sweep. `export`
 records the policy and the stale-artifact dry-run count in `ecosystem.json`.
 
 `tools verify` checks every discovered tool (script exists, policy status,

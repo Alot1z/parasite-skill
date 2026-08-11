@@ -101,7 +101,10 @@ prunes stale agent reports and ledger entries by age (`--age N` days) or count
 (`--keep N` newest), with `--dry-run` previewing deletions; a project `gc` TTL
 policy (`parasite-skill.json` `"gc": { "ageDays", "keep", "auto" }`) becomes
 the default when no CLI knobs are given, and `doctor` reports the policy
-posture. `doctor` runs the same gates as CI in one command: spec validation,
+posture. With `"auto": true` the sweep is also applied automatically at the
+`scan`, `export`, and `doctor` entry points, so stale artifacts never
+accumulate between manual runs. `doctor` runs the same gates as CI in one
+command: spec validation,
 tool readiness, audit baseline, and project-config parse — and is also exposed
 to MCP hosts as a `doctor` tool in both twins. `export` includes a `tools`
 array (name/skill/language/risk) so the AI layer knows the executable surface,

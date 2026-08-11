@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expandDirs, registryDir, scan } from "../engine.js";
+import { runAutoGc } from "./tools.js";
 import { fmt } from "./_lib.js";
 
 export function cmdScan(args) {
@@ -9,6 +10,9 @@ export function cmdScan(args) {
   const payload = scan(expandDirs(args.dirs));
   const elapsedMs = (performance.now() - t0).toFixed(1);
   writeFileSync(join(reg, "registry.json"), JSON.stringify(payload, null, 2));
+  // Scheduled GC: honor the project gc TTL policy (auto: true) so stale
+  // registry artifacts never accumulate across scans.
+  runAutoGc(reg, args);
   const langs = [...new Set(payload.skills.flatMap((s) => s.languages))].sort();
   const invalid = payload.skills.filter((s) => !s.spec_ok).map((s) => s.name);
   if (args.json) {

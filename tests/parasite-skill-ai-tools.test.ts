@@ -7,6 +7,7 @@ import { scan, composePayload, mergeConfig } from "../src/engine.js";
 import { planGc } from "../src/commands/tools.js";
 import { auditSkillTools, filterToolsByPolicy, listSkillTools, policyFor, readToolRuns, resolveToolRun, runSkillTool, validateToolArgs } from "../src/ai-tools.js";
 import { cmdTools } from "../src/commands/tools.js";
+import { cmdScan } from "../src/commands/scan.js";
 import { cmdAgentsRun } from "../src/commands/agents-run.js";
 import { cmdAgentsList } from "../src/commands/agents-list.js";
 import { cmdDoctor } from "../src/commands/doctor.js";
@@ -2113,6 +2114,100 @@ describe("trace ledger counts", () => {
       expect(text).toContain("demo-skill");
       expect(text).toContain("tools executed (ledger): 1 distinct / 1 runs (1 ok)");
       expect(text).toContain("demo-skill__hello");
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("scheduled auto-gc runner", () => {
+  function seedStale(registry: string, dirs: string) {
+    const agentsDir = join(registry, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, "stale-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    const oldStamp = new Date("2020-01-01T00:00:00Z");
+    utimesSync(join(agentsDir, "stale-report.json"), oldStamp, oldStamp);
+    const payload = scan([dirs]);
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    return { agentsDir };
+  }
+
+  test("scan auto-applies the gc policy when auto: true", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const { agentsDir } = seedStale(registry, dirs);
+    expect(readToolRuns(registry).length).toBe(2);
+    const origErr = console.error;
+    const errOut: string[] = [];
+    console.error = (...a) => errOut.push(a.join(" "));
+    try {
+      // auto: true + ageDays 0 -> the sweep runs inside cmdScan itself.
+      expect(cmdScan({ registry, dirs, gc: { ageDays: 0, auto: true } })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(false);
+      expect(readToolRuns(registry).length).toBe(0);
+      expect(errOut.join("\n")).toContain("auto-gc: pruned");
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  test("auto-gc stays off without auto: true", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const { agentsDir } = seedStale(registry, dirs);
+    const origErr = console.error;
+    const errOut: string[] = [];
+    console.error = (...a) => errOut.push(a.join(" "));
+    try {
+      // Same policy without the auto flag: nothing is swept.
+      expect(cmdScan({ registry, dirs, gc: { ageDays: 0 } })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(true);
+      expect(readToolRuns(registry).length).toBe(2);
+      expect(errOut.join("\n")).not.toContain("auto-gc");
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  test("doctor self-heals stale artifacts under an auto policy", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const { agentsDir } = seedStale(registry, dirs);
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // The sweep runs before the posture check, so doctor passes with a
+      // clean bill rather than failing on artifacts it just cleared.
+      expect(cmdDoctor({ registry, dirs, gc: { ageDays: 0, auto: true } })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(false);
+      expect(readToolRuns(registry).length).toBe(0);
+      expect(out.join("\n")).toContain("no stale artifacts under the gc policy");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("export auto-applies the gc policy when auto: true", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const { agentsDir } = seedStale(registry, dirs);
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdExport({ registry, dirs, gc: { ageDays: 0, auto: true } })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(false);
+      expect(out.join("\n")).toContain("ecosystem written");
     } finally {
       console.log = orig;
     }

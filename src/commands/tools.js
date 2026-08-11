@@ -105,6 +105,39 @@ export function planGc(reg, { ageDays, keep, dryRun = false } = {}) {
   return { removed, totals: { agent_files: removed.agent_files.length, ledger_entries: removed.ledger_entries } };
 }
 
+/**
+ * Scheduled GC runner: when the project gc TTL policy declares `auto: true`,
+ * apply the sweep right now so stale registry artifacts never accumulate
+ * between manual `tools gc` runs. Best-effort: prints a one-line note to
+ * stderr (stdout JSON stays machine-clean), never throws, and never changes
+ * the host command's exit code. Wired into the scan/export/doctor entry
+ * points. Returns { ran, pruned } after a sweep, { ran: false, pruned } when
+ * the policy is on but nothing was stale, or null when it is off/absent.
+ */
+export function runAutoGc(reg, args = {}) {
+  try {
+    const policy =
+      args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : null;
+    const effective = policy ?? loadProjectConfig()?.gc ?? null;
+    if (!effective || effective.auto !== true) return null;
+    const byAge = Number.isFinite(effective.ageDays) && effective.ageDays >= 0;
+    const byKeep = Number.isFinite(effective.keep) && effective.keep >= 0;
+    if (!byAge && !byKeep) return null;
+    // A single non-dry call is enough: planGc is already a no-op when nothing
+    // is stale (agent files are only removed when listed, the ledger is only
+    // rewritten when entries are dropped), so no dry-run pre-pass is needed.
+    const applied = planGc(reg, { ageDays: effective.ageDays, keep: effective.keep, dryRun: false });
+    if (!applied.totals.agent_files && !applied.totals.ledger_entries) return { ran: false, pruned: applied.totals };
+    console.error(
+      `auto-gc: pruned ${applied.totals.agent_files} agent report(s), ${applied.totals.ledger_entries} ledger entry(ies) under the project gc policy (auto: true)`,
+    );
+    return { ran: true, pruned: applied.totals };
+  } catch (err) {
+    console.error(`auto-gc skipped: ${String(err.message ?? err)}`);
+    return null;
+  }
+}
+
 export function cmdTools(args = {}) {
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);

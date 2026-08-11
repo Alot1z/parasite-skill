@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadProjectConfig, loadRegistry, registryDir } from "../engine.js";
 import { auditSkillTools, filterToolsByPolicy, listSkillTools, resolveToolRun } from "../ai-tools.js";
-import { planGc } from "./tools.js";
+import { planGc, runAutoGc } from "./tools.js";
 
 export function cmdDoctor(args = {}) {
   const reg = registryDir(args.registry);
@@ -78,7 +78,12 @@ export function cmdDoctor(args = {}) {
   if (project) ok("config", `project config loaded: ${project._path}`);
   else ok("config", "no project config present");
 
-  // 5. Project GC TTL posture: when a gc policy exists, dry-run it and report
+  // 5. Scheduled GC: when the project policy declares `auto: true`, apply the
+  // sweep right now so the posture check below sees post-gc state — doctor
+  // self-heals instead of failing on artifacts the runner could have cleared.
+  runAutoGc(reg, args);
+
+  // 6. Project GC TTL posture: when a gc policy exists, dry-run it and report
   // how many stale artifacts a prune would remove. Informational unless the
   // policy declares `auto: true` (safe to run unattended) — then stale
   // artifacts mean the scheduled cleanup has not happened, which is a failing

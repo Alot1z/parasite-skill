@@ -16,7 +16,7 @@ import { AGENT_PROFILES } from "../data/agent-profiles.js";
 import { buildEcosystemGraph, publicGraph } from "../ecosystem-graph.js";
 import { auditSkillTools, listSkillTools } from "../ai-tools.js";
 import { syncState } from "./sync.js";
-import { planGc } from "./tools.js";
+import { planGc, runAutoGc } from "./tools.js";
 import { fmt } from "./_lib.js";
 
 // Rule/config files checked for existence only (no contents).
@@ -345,6 +345,9 @@ export function cmdExport(args) {
   if (!globalRules.length && !perClientRules.length && !projectInfo) md.push("None found.", "");
 
   writeFileSync(join(reg, "ECOSYSTEM.md"), md.join("\n"));
+  // Scheduled GC: honor the project gc TTL policy (auto: true) so the export
+  // leaves the registry tidy, not just reports on its staleness.
+  runAutoGc(reg, args);
   if (args.json) {
     // Machine view for MCP/CI: the full LLM-ready inventory.
     console.log(JSON.stringify(llm, null, 2));
