@@ -1,8 +1,15 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadRegistry, registryDir, loadSets, loadSetsWithProject, saveCustomSets, SETS } from "../engine.js";
+import { readTemplate } from "./_lib.js";
 
 export function cmdSets(args) {
+  // ---- print the new-set creation template --------------------------------
+  if (args.template) {
+    console.log(readTemplate("new-set.md"));
+    return 0;
+  }
+
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);
   const installed = new Set(payload.skills.map((s) => s.name));
@@ -20,6 +27,7 @@ export function cmdSets(args) {
     const members = (args.members || "").split(",").map((m) => m.trim()).filter(Boolean);
     if (!members.length) {
       console.error("usage: sets --new NAME --members a,b,c [--desc text]");
+      console.error("tip:   sets --template   prints the new-set design template");
       return 1;
     }
     custom[name] = { desc: args.desc || "custom set", members };
@@ -113,6 +121,7 @@ export function cmdSets(args) {
   }
   console.log("\n* = custom set (editable via --new/--add/--remove/--delete)");
   console.log("(project) = defined in skill-router.json");
+  console.log("tip: sets --template prints the new-set design template");
   return 0;
 }
 

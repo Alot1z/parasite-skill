@@ -4,6 +4,7 @@ export { cmdRoute } from "./route.js";
 export { cmdSets } from "./sets.js";
 export { cmdRefs } from "./refs.js";
 export { cmdWikis } from "./wikis.js";
+export { cmdExport } from "./export.js";
 export { cmdPlan } from "./plan.js";
 export { cmdTrace } from "./trace.js";
 export { cmdLink } from "./link.js";

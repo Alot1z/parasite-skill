@@ -189,6 +189,23 @@ export function runMcpRemove(args = {}) {
   return 0;
 }
 
+/** Data getter: which configs currently reference skill-router (for export/status). */
+export function mcpRegistrationStatus() {
+  const rows = [];
+  for (const t of TARGETS) {
+    const file = t.file();
+    const cfg = readJson(file);
+    const map = t.get(cfg);
+    rows.push({
+      id: t.id,
+      label: t.label,
+      file: file.replace(/\\/g, "/"),
+      registered: !!(map && typeof map === "object" && map[SR]),
+    });
+  }
+  return rows;
+}
+
 /** Show which configs currently reference skill-router. */
 export function runMcpList() {
   console.log("skill-router MCP registration:");

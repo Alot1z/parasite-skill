@@ -28,9 +28,12 @@ COMMANDS
             (--dirs a,b)
   validate  Check every skill against the Agent Skills spec (exit 1 on issues)
   route     "<idea text>"   Score skills for an idea (--top N, --set, --json)
-  sets      List skill-sets (--apply NAME to print a load order)
+  sets      List skill-sets (--apply NAME to print a load order,
+            --template to print the new-set creation template)
   refs      Generate ref pages (--per-skill)
   wikis     Generate the wiki + graph
+  export    Inventory the whole ecosystem (skills, sets, clients, extensions,
+            MCP, rules) -> ECOSYSTEM.md + ecosystem.json (human + LLM ready)
   plan      "<request>"     Emit a routed execution plan
   trace     <file>          Count skill usage in a transcript
   link      Create/remove per-skill refs/wiki links (--unlink, --no-default)
@@ -107,6 +110,7 @@ export function parseFlags(argv) {
       case "--add": { const v = value(++i, a); if (v !== undefined) flags.add = v; break; }
       case "--remove": { const v = value(++i, a); if (v !== undefined) flags.remove = v; break; }
       case "--delete": { const v = value(++i, a); if (v !== undefined) flags.delete = v; break; }
+      case "--template": flags.template = true; break;
       case "--per-skill": flags.per_skill = true; break;
       case "--unlink": flags.unlink = true; break;
       case "--no-default": flags.no_default = true; break;
@@ -135,8 +139,6 @@ export function parseFlags(argv) {
         if (v !== undefined) flags.agents.push(...v.split(",").map((x) => x.trim()).filter(Boolean));
         break;
       }
-      case "--status": flags.status = true; break;
-      case "--add": { const v = value(++i, a); if (v !== undefined) flags.add = v; break; }
       case "--toggle": { const v = value(++i, a); if (v !== undefined) flags.toggle = v; break; }
       case "--enable": flags.enable = true; break;
       case "--disable": flags.enable = false; break;
@@ -185,7 +187,7 @@ export async function run(argv) {
   // Load project config and merge with CLI flags
   const projectConfig = loadProjectConfig();
   const ctx = { ...mergeConfig(projectConfig, flags), idea: arg, request: arg, file: rest[0] };
-  
+
   // Log config source if verbose
   if (projectConfig && process.env.SKILL_ROUTER_VERBOSE) {
     console.error(`Using project config from: ${projectConfig._path}`);
@@ -203,6 +205,7 @@ export async function run(argv) {
     case "sets": return commands.cmdSets(ctx);
     case "refs": return commands.cmdRefs(ctx);
     case "wikis": return commands.cmdWikis(ctx);
+    case "export": return commands.cmdExport(ctx);
     case "plan": return commands.cmdPlan(ctx);
     case "trace": return commands.cmdTrace(ctx);
     case "link": return commands.cmdLink(ctx);

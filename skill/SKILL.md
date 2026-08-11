@@ -50,6 +50,8 @@ Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or
 | `--agents` | Generate AGENTS.md for the current project from the registry |
 | `--bundle` | Build a tarball + install.json for GitHub Pages (no-npm distribution) |
 | `parasite --status/--add/--toggle/--remove` | Manage runtime extensions that enhance skills, agents, hooks, and MCP servers **without modifying their source** (extension folders + manifest; fully toggleable and removable) |
+| `export` | Inventory the whole ecosystem (skills, sets, clients, parasite extensions, MCP, rules) into `ECOSYSTEM.md` (human-ready) + `ecosystem.json` (LLM-ready) — know everything installed without rescanning. Paths/names only, no contents |
+| `--sets --template` | Print the new-set design template (phases, sizing rules, starter sets) |
 
 ## The Routing Process
 
@@ -85,6 +87,12 @@ Named bundles so one word activates many skills. Full table in `references/skill
 | `frontend` | UI that actually works | frontend-ui-engineering, frontend-design, browser-testing-with-devtools |
 | `ops` | Ship safely | ci-cd-and-automation, shipping-and-launch, observability-and-instrumentation |
 | `intelligence` | Understand the codebase | ix, understand, code-review-graph, knip |
+| `brainstorm-max` | Interview -> diverge -> converge -> doubt | interview-me, brainstorming, idea-refine, 7-scared-circle-clarity, doubt-driven-development |
+| `plan-execute` | Spec -> plan -> slice -> test -> land | writing-plans, planning-and-task-breakdown, spec-driven-development, incremental-implementation, test-driven-development |
+| `research-deep` | Live docs + source-grounded verification | deepwiki, context7, find-docs, web-reader, source-driven-development |
+| `thinking-max` | Full before/during/after thinking cadence | tractatus-thinking, sequential-thinking, doubt-driven-development, debug-thinking, verification-before-completion |
+| `mega-injector` | Connect, wrap, inject, extend anything | system-connector, mcp-builder, api-and-interface-design, security-and-hardening, cli-anything, computer-use |
+| `token-saver` | Max token + context efficiency | agent-token-optimizer, context-engineering, prompt-optimizer, stop-slop |
 | `all` | Everything | all registered skills |
 
 ## Routing Within a Set
