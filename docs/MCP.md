@@ -63,6 +63,11 @@ dependencies and does not require model credentials.
 | `skill_tools_docs` | `dirs?`, `allow?`, `deny?` | TOOLS.md reference of the callable skill AI-tool surface |
 | `skill_tools_run` | `name`, `args?`, `json_args?`, `timeout_ms?`, `dirs?`, `allow?`, `deny?`, `env?` | explicitly execute one skill AI-tool; bounded, captured, redacted, policy-gated; `json_args` is validated against the tool's declared `argsSchema` |
 
+`compose` responses now carry per-selected-skill `tools` arrays (name,
+language, `argsSchema` presence) so the host can see the executable surface
+without a separate `skill_tools_list` round trip. The local `refs` pages list
+the same tools per skill.
+
 `skill_tools_run` makes the skill ecosystem executable by the host LLM: the
 host first lists the tools, then calls the ones it needs with a space-separated
 argument string. Execution only ever happens when this tool is called, is
@@ -92,9 +97,11 @@ autonomously.
 ```
 
 The deterministic engine selects relevant skills, sets, asset manifests, and
-bounded excerpts. The MCP host's LLM makes semantic decisions using that
-payload. `compose` itself is not an LLM and does not dump every installed
-skill into chat.
+bounded excerpts. Each selected skill also lists its callable AI-tools (names,
+language, declared-schema presence) so the host knows what can actually be
+executed via `skill_tools_run`. The MCP host's LLM makes semantic decisions
+using that payload. `compose` itself is not an LLM and does not dump every
+installed skill into chat.
 
 ## Privacy and security
 

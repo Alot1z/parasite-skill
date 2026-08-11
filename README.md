@@ -34,7 +34,7 @@ parasite-skill plan "add authentication to the service"
 parasite-skill compose "debug the failing MCP request" --json
 ```
 
-`compose` is the runtime boundary. It returns selected skills, rationale, relevant asset metadata, small safe excerpts, execution order, and verification cadence. Full skill documents, scripts, hooks, and templates remain on demand instead of being pasted into the chat.
+`compose` is the runtime boundary. It returns selected skills, rationale, relevant asset metadata, small safe excerpts, the callable AI-tools each selected skill declares, execution order, and verification cadence. Full skill documents, scripts, hooks, and templates remain on demand instead of being pasted into the chat.
 
 Routing is deterministic and inspectable: token and body-keyword matches, request mode, tags, explicit skill names, project set filters, and exclusions contribute to the result. The model still makes the semantic decision; scores are candidates, not proof.
 
@@ -68,9 +68,21 @@ Extra tool workflows:
 ```bash
 parasite-skill tools dry-run <name> --args "..."   # preview the exact command
 parasite-skill tools audit                          # static risk audit of tools
+parasite-skill tools audit --write-baseline         # seed a risk baseline file
+parasite-skill tools audit --baseline               # diff current risk vs baseline
+parasite-skill tools verify                         # readiness: scripts/policy/schemas
 parasite-skill tools history                        # audit ledger of executed tools
+parasite-skill tools history --name "demo*" --status fail   # filter the ledger
 parasite-skill tools history --clear                # reset the ledger
 ```
+
+`tools verify` checks every discovered tool (script exists, policy status,
+schema shape) and exits 1 when anything is broken — a cheap readiness gate
+before a release or a fresh machine. `tools audit --write-baseline` persists
+the expected per-tool risk, and `tools audit --baseline` diffs against it,
+exiting 1 when any tool regressed to a higher risk level. `tools history`
+filters the ledger by tool-name glob (`--name`), skill glob (`--skill`), or
+status (`--status ok|fail`).
 
 Skills can declare per-tool metadata in their `SKILL.md` frontmatter as a
 `tools:` JSON block keyed by tool name or asset path — overriding the
@@ -134,8 +146,10 @@ parasite-skill tools policy --drop-policy
 Per-invocation knobs: `tools run <name> --json-args '{"port":8080}'` validates
 structured args against the tool's declared `argsSchema` (exit 3 on invalid),
 and `--tool-env KEY=VALUE,...` injects inline env overrides for that run.
-`export` records the active tools policy (names/keys only) in `ecosystem.json`
-so the AI layer knows the execution gate without rescanning.
+`tools run-batch a,b --json-args '{"tool-a__x": {"port": 8080}, "tool-b__y": {}}'`
+accepts a per-tool map so each tool in the batch is validated against its own
+schema. `export` records the active tools policy (names/keys only) in
+`ecosystem.json` so the AI layer knows the execution gate without rescanning.
 
 ## Auto-max routing
 
@@ -168,10 +182,14 @@ across profiles and a combined report is written to `agents/all-<request>.md`
 parasite-skill agents list          # inventory all profiles
 parasite-skill agents show security-auditor   # print one profile's recipe
 parasite-skill agents run security-auditor "audit the LLM boundary" --dry-run
+parasite-skill agents run security-auditor "audit the boundary" --dry-run --strict
 ```
 
-`--dry-run` resolves and policy-checks every tool a profile would run and
-prints the exact commands — nothing executes and the ledger stays untouched.
+`--dry-run` resolves and policy-checks every tool a profile would run, prints
+the exact commands, and writes a preview report
+(`agents/<profile>-<request>.dryrun.md` + `.json`) — nothing executes and the
+ledger stays untouched. Add `--strict` to turn any policy-blocked tool into a
+hard failure (exit 2), so CI can gate on a partially-blocked profile.
 
 ## Typed ecosystem graph
 
@@ -199,6 +217,14 @@ The typed graph models:
 `graph --dot` and `graph --mmd` are suitable for Graphviz and Mermaid. The legacy skill vocabulary graph remains available with `parasite-skill graph --dot` without `--ecosystem`. The `ix` skill can map this repository for symbol-level callers, callees, impact, and smells; the generated ecosystem graph is the portable package-level view and does not vendor Ix.
 
 `export` and private `wikis` inventories never publish file contents, secrets, environment values, or chat history. Use `--public` for graph/wiki artifacts intended for Pages: it removes filesystem paths and sanitizes generated descriptions while keeping only public metadata.
+
+## Refs list each skill's AI-tools
+
+`parasite-skill refs` now includes a **Callable AI-Tools** section on every
+skill's ref page — the exact `<skill>__<asset>` tool names, their language,
+whether they declare an `argsSchema`, and a short description. The refs index
+and per-skill pages become the human-readable twin of `tools list`, so the
+readable inventory and the executable surface never disagree.
 
 ## Declarative agent profiles and sets
 

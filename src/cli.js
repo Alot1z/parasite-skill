@@ -84,6 +84,12 @@ TOOLS FLAGS
   --threshold X    tools audit: gate on low|medium|high risk
   --clear          tools history: clear the run ledger
   --limit N        tools history: how many ledger entries to show
+  --history-name G tools history: filter by tool name glob
+  --history-skill G  tools history: filter by skill name glob
+  --history-status S  tools history: filter by status (ok|fail)
+  --strict         agents run: exit 2 if any selected tool is policy-blocked
+  --baseline       tools audit: diff against the persisted risk baseline
+  --write-baseline tools audit: seed the risk baseline file
   --env-filter a,b Tool env allowlist (only these env keys reach tool processes)
   --no-tools       llm: do not expose skill tools as functions
   --max-tool-calls N  llm: max tool-calling loop iterations (default 8)
@@ -189,6 +195,7 @@ COMMANDS
   run-batch a,b,c      Execute several tools sequentially (shared ledger)
   dry-run <name> [args] Preview the exact command without executing
   audit                Static risk audit of discovered tools
+  verify               Readiness check: scripts exist, policy, schema shape
   docs                 Generate a TOOLS.md reference of the tool surface
   policy               Read or edit the project tools policy (see below)
   history              Show the local execution ledger (--clear to reset)
@@ -202,7 +209,13 @@ FLAGS
   --dry-run        Preview without executing (policy)
   --timeout-ms N   Execution timeout (default 30000, cap 300000)
   --threshold X    audit gate on low|medium|high
+  --baseline       audit: diff against the persisted risk baseline
+  --write-baseline  audit: seed the risk baseline file
+  --history-name G history: filter by tool name glob
+  --history-skill G  history: filter by skill name glob
+  --history-status S  history: filter by status (ok|fail)
   --limit N        history entries to show
+  --strict         agents run: exit 2 on policy-blocked tools
   --out PATH       docs: write TOOLS.md elsewhere (default registry/TOOLS.md)
   --json           Machine-readable output
 
@@ -352,6 +365,12 @@ export function parseFlags(argv) {
       case "--max-tools": { const v = value(++i, a); if (v !== undefined) flags.maxTools = num(v); break; }
       case "--clear": flags.clear = true; break;
       case "--continue": flags.continue = true; break;
+      case "--strict": flags.strict = true; break;
+      case "--baseline": flags.baseline = true; break;
+      case "--write-baseline": flags.writeBaseline = true; break;
+      case "--history-name": { const v = value(++i, a); if (v !== undefined) flags.historyName = v; break; }
+      case "--history-skill": { const v = value(++i, a); if (v !== undefined) flags.historySkill = v; break; }
+      case "--history-status": { const v = value(++i, a); if (v !== undefined) flags.historyStatus = v; break; }
       case "--names": { const v = value(++i, a); if (v !== undefined) flags.names = v; break; }
       case "--limit": { const v = value(++i, a); if (v !== undefined) flags.limit = num(v); break; }
       case "--env-filter": { const v = value(++i, a); if (v !== undefined) flags.envFilter = v; break; }

@@ -4,15 +4,18 @@
 //  tools run <name> [args]          execute one tool (explicit, bounded, redacted)
 //  tools run-batch a,b,c [args]     execute several tools sequentially, shared ledger
 //  tools dry-run <name> [args]      preview the exact command without executing
-//  tools audit                      static risk audit of discovered tools
+//  tools audit [--baseline]         static risk audit; diff against a persisted
+//                                   baseline (--write-baseline seeds it)
+//  tools verify                     readiness check: scripts exist, policy, schemas
 //  tools docs                       generate a TOOLS.md reference of the tool surface
 //  tools policy                     read or edit the project tools policy in
 //                                   parasite-skill.json (allow/deny/env/timeoutMs/scoped)
-//  tools history                    show the local execution ledger
+//  tools history [--name/--skill/--status]  audit ledger, filterable
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { loadProjectConfig, loadRegistry, registryDir } from "../engine.js";
 import { auditSkillTools, clearToolRuns, filterToolsByPolicy, listSkillTools, readToolRuns, renderToolsDocs, resolveToolRun, runSkillTool } from "../ai-tools.js";
+import { fmt } from "./_lib.js";
 
 function parseKeyValues(raw) {
   if (!raw) return null;
@@ -23,6 +26,10 @@ function parseKeyValues(raw) {
     out[part.slice(0, idx).trim()] = part.slice(idx + 1);
   }
   return Object.keys(out).length ? out : null;
+}
+
+function globToRegExp(pattern) {
+  return new RegExp(`^${String(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
 }
 
 function actionArgs(args) {
@@ -103,6 +110,57 @@ export function cmdTools(args = {}) {
     const levels = ["low", "medium", "high"];
     const minIndex = levels.indexOf(threshold);
     const flagged = audits.filter((entry) => levels.indexOf(entry.risk) >= minIndex);
+
+    if (args.writeBaseline) {
+      const baseline = {
+        version: 1,
+        generated_at: new Date().toISOString(),
+        tools: Object.fromEntries(audits.map((entry) => [entry.name, entry.risk])),
+      };
+      writeFileSync(join(reg, "tool-audit-baseline.json"), JSON.stringify(baseline, null, 2) + "\n", "utf-8");
+      console.log(`baseline written -> ${fmt(join(reg, "tool-audit-baseline.json"))} (${audits.length} tools)`);
+      return 0;
+    }
+
+    if (args.baseline) {
+      const baselineFile = join(reg, "tool-audit-baseline.json");
+      if (!existsSync(baselineFile)) {
+        console.error(`no audit baseline found; run: tools audit --write-baseline`);
+        return 2;
+      }
+      let baseline;
+      try {
+        baseline = JSON.parse(readFileSync(baselineFile, "utf-8")).tools ?? {};
+      } catch (err) {
+        console.error(`failed to parse audit baseline: ${err.message}`);
+        return 2;
+      }
+      const drift = [];
+      let regressions = 0;
+      for (const entry of audits) {
+        const expected = baseline[entry.name];
+        if (!expected) {
+          drift.push({ name: entry.name, risk: entry.risk, expected: null, change: "new" });
+        } else if (expected !== entry.risk) {
+          const worse = levels.indexOf(entry.risk) > levels.indexOf(expected);
+          if (worse) regressions++;
+          drift.push({ name: entry.name, risk: entry.risk, expected, change: worse ? "regression" : "improvement" });
+        }
+      }
+      if (args.json) {
+        console.log(JSON.stringify({ threshold, baseline: baselineFile, drift, regressions }, null, 2));
+      } else {
+        console.log(`tool risk audit vs baseline (threshold ${threshold}):`);
+        if (!drift.length) console.log("  no drift from baseline");
+        for (const entry of drift) {
+          const arrow = entry.change === "regression" ? "UP" : entry.change === "improvement" ? "down" : "new";
+          console.log(`  [${arrow}] ${entry.name}: ${entry.expected ?? "-"} -> ${entry.risk}`);
+        }
+        console.log(`${regressions} regression(s)`);
+      }
+      return regressions ? 1 : 0;
+    }
+
     if (args.json) {
       console.log(JSON.stringify({ threshold, tools: audits, flagged: flagged.length }, null, 2));
     } else {
@@ -117,6 +175,47 @@ export function cmdTools(args = {}) {
     return flagged.length ? 1 : 0;
   }
 
+  if (sub === "verify") {
+    const tools = listSkillTools(payload);
+    const checks = [];
+    let broken = 0;
+    for (const tool of tools) {
+      const script = join(payload.skills.find((s) => s.name === tool.skill)?.path ?? "", tool.path);
+      const status = {};
+      if (!existsSync(script)) {
+        status.missing = true;
+        broken++;
+      }
+      try {
+        resolveToolRun(payload, tool.name, "", { policy });
+      } catch (err) {
+        if (err.code === "TOOL_DENIED" || err.code === "TOOL_NOT_ALLOWED") status.blocked = true;
+        else if (err.code !== "MISSING_FILE") {
+          status.error = String(err.message ?? err);
+          broken++;
+        }
+      }
+      if (tool.argsSchema && (typeof tool.argsSchema !== "object" || Array.isArray(tool.argsSchema))) {
+        status.badSchema = true;
+        broken++;
+      } else if (tool.argsSchema?.properties != null && typeof tool.argsSchema.properties !== "object") {
+        status.badSchema = true;
+        broken++;
+      }
+      checks.push({ name: tool.name, skill: tool.skill, command: tool.command, ...status });
+    }
+    if (args.json) {
+      console.log(JSON.stringify({ count: checks.length, broken, checks }, null, 2));
+    } else {
+      console.log(`tool readiness check: ${checks.length - broken}/${checks.length} ready`);
+      for (const check of checks) {
+        const mark = check.missing ? "missing" : check.error ? "error" : check.badSchema ? "schema" : check.blocked ? "blocked" : "ok";
+        console.log(`  [${mark}] ${check.name}${check.blocked ? " (policy)" : ""}${check.missing ? " (file missing)" : ""}${check.error ? ` — ${check.error}` : ""}`);
+      }
+    }
+    return broken ? 1 : 0;
+  }
+
   if (sub === "history") {
     if (args.clear) {
       clearToolRuns(reg);
@@ -124,7 +223,18 @@ export function cmdTools(args = {}) {
       return 0;
     }
     const limit = Math.max(1, Number(args.limit) || 50);
-    const entries = readToolRuns(reg, limit);
+    let entries = readToolRuns(reg, 5000);
+    if (args.historyName) {
+      const pattern = globToRegExp(args.historyName);
+      entries = entries.filter((entry) => pattern.test(entry.name));
+    }
+    if (args.historySkill) {
+      const pattern = globToRegExp(args.historySkill);
+      entries = entries.filter((entry) => pattern.test(entry.skill ?? ""));
+    }
+    if (args.historyStatus === "ok") entries = entries.filter((entry) => entry.status === 0);
+    if (args.historyStatus === "fail") entries = entries.filter((entry) => entry.status !== 0);
+    entries = entries.slice(0, limit);
     if (args.json) {
       console.log(JSON.stringify({ count: entries.length, entries }, null, 2));
     } else {
@@ -252,15 +362,35 @@ export function cmdTools(args = {}) {
     const timeoutMs = args.timeoutMs ?? args.tools?.timeoutMs;
     const stopOnError = args.continue !== true;
     const envExtra = parseKeyValues(args.toolEnv);
+    // --json-args for a batch accepts either a plain object (applied to every
+    // tool) or a map keyed by tool name (per-tool structured args). Each tool's
+    // args are validated against its own declared argsSchema.
+    let parsedBatchArgs = undefined;
+    if (args.jsonArgs !== undefined) {
+      try {
+        parsedBatchArgs = typeof args.jsonArgs === "string" ? JSON.parse(args.jsonArgs) : args.jsonArgs;
+      } catch {
+        console.error("--json-args is not valid JSON");
+        return 3;
+      }
+    }
+    const nameSet = new Set(names);
+    const isMap =
+      parsedBatchArgs !== undefined &&
+      parsedBatchArgs !== null &&
+      typeof parsedBatchArgs === "object" &&
+      !Array.isArray(parsedBatchArgs) &&
+      names.some((name) => name in parsedBatchArgs);
     const results = [];
     let code = 0;
     for (const name of names) {
+      const jsonArgsForTool = isMap ? parsedBatchArgs[name] : parsedBatchArgs;
       try {
         const result = runSkillTool(payload, name, toolArgs, {
           timeoutMs,
           policy,
           registry: reg,
-          ...(args.jsonArgs !== undefined ? { jsonArgs: args.jsonArgs } : {}),
+          ...(jsonArgsForTool !== undefined ? { jsonArgs: jsonArgsForTool } : {}),
           ...(envExtra ? { env: { ...process.env, ...envExtra } } : {}),
         });
         results.push(result);
@@ -316,6 +446,6 @@ export function cmdTools(args = {}) {
     }
   }
 
-  console.error("tools action must be list, describe, run, run-batch, dry-run, audit, docs, policy, or history");
+  console.error("tools action must be list, describe, run, run-batch, dry-run, audit, verify, docs, policy, or history");
   return 1;
 }

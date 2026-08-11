@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadRegistry, registryDir } from "../engine.js";
+import { listSkillTools } from "../ai-tools.js";
 import { fmt, readTemplate } from "./_lib.js";
 
 export function cmdRefs(args) {
@@ -10,6 +11,14 @@ export function cmdRefs(args) {
   mkdirSync(refsRoot, { recursive: true });
   const template = readTemplate("ref-skill.md");
   const index = ["# Skill Refs Index", ""];
+  // Per-skill callable AI-tools (scripts/hooks/tools) are listed on each ref
+  // page so the refs surface also inventories what can actually be executed.
+  const toolsBySkill = new Map();
+  for (const tool of listSkillTools(payload)) {
+    const list = toolsBySkill.get(tool.skill) ?? [];
+    list.push(tool);
+    toolsBySkill.set(tool.skill, list);
+  }
   for (const s of payload.skills) {
     const d = join(refsRoot, s.name);
     mkdirSync(d, { recursive: true });
@@ -27,7 +36,13 @@ export function cmdRefs(args) {
       .replaceAll("{{references_count}}", String(refs.length))
       .replaceAll("{{assets_count}}", String(assets.length))
       .replaceAll("{{scripts_list}}", scripts.map((x) => `- ${x}`).join("\n") || "- none")
-      .replaceAll("{{references_list}}", refs.map((x) => `- ${x}`).join("\n") || "- none");
+      .replaceAll("{{references_list}}", refs.map((x) => `- ${x}`).join("\n") || "- none")
+      .replaceAll(
+        "{{tools_list}}",
+        (toolsBySkill.get(s.name) ?? [])
+          .map((tool) => `- \`${tool.name}\` (${tool.language}${tool.argsSchema ? ", schema" : ""}) — ${tool.description.slice(0, 100)}`)
+          .join("\n") || "- none",
+      );
     writeFileSync(join(d, "index.md"), page);
     index.push(`- [${s.name}](${s.name}/index.md) — ${s.description.slice(0, 90)}`);
     if (args.per_skill) {

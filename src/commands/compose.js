@@ -40,8 +40,11 @@ export function cmdCompose(args) {
   console.log("selected skills:");
   for (const skill of runtime.selectedSkills) {
     const excerpt = skill.excerpts.length ? `, ${skill.excerpts.length} excerpt${skill.excerpts.length === 1 ? "" : "s"}` : "";
-    console.log(`  ${skill.name} (${skill.score}) — ${skill.assets.length} assets${excerpt}`);
+    const tools = skill.tools.length ? `, ${skill.tools.length} callable tool${skill.tools.length === 1 ? "" : "s"}` : "";
+    console.log(`  ${skill.name} (${skill.score}) — ${skill.assets.length} assets${excerpt}${tools}`);
   }
+  const totalTools = runtime.selectedSkills.reduce((n, skill) => n + skill.tools.length, 0);
+  if (totalTools) console.log(`callable tools: ${totalTools} (execute with tools run <name>; policy-filtered)`);
   console.log(`payload: ${fmt(out)}`);
   console.log(`chat budget: ${runtime.loading.excerptChars}/${runtime.loading.maxExcerptChars} excerpt chars; full content on demand`);
   return 0;

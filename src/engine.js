@@ -386,6 +386,33 @@ function excerptForAsset(skillPath, asset, requestTokens, maxChars) {
   }
 }
 
+// Callable AI-tool naming mirrors ai-tools.js `toolNameFor` so the compose
+// payload and the executable surface stay in sync: `<skill>__<base>` where base
+// is the asset file name minus its extension, lowercased and sanitized. Only
+// assets in the scripts/hooks/tools groups with a known interpreter are listed.
+const TOOL_GROUPS_FOR_COMPOSE = new Set(["scripts", "hooks", "tools"]);
+const TOOL_INTERPRETERS_FOR_COMPOSE = new Set([".py", ".js", ".mjs", ".cjs", ".sh", ".bash"]);
+
+export function callableToolsForSkill(skill) {
+  const tools = [];
+  for (const asset of skill?.assets ?? []) {
+    if (!TOOL_GROUPS_FOR_COMPOSE.has(asset.group)) continue;
+    const ext = asset.path.slice(asset.path.lastIndexOf(".")).toLowerCase();
+    if (!TOOL_INTERPRETERS_FOR_COMPOSE.has(ext)) continue;
+    const base = asset.path.split("/").pop().replace(/\.[^.]+$/, "");
+    const name = `${skill.name}__${base}`.toLowerCase().replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "");
+    const meta = skill.toolsMeta?.[name] ?? skill.toolsMeta?.[asset.path] ?? {};
+    tools.push({
+      name,
+      path: asset.path,
+      language: asset.language ?? (ext === ".py" ? "python" : ext.slice(1)),
+      argsSchema: meta.argsSchema && typeof meta.argsSchema === "object" ? true : undefined,
+      description: typeof meta.description === "string" && meta.description.trim() ? meta.description.trim().slice(0, 200) : undefined,
+    });
+  }
+  return tools.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 const REQUEST_MODE_RULES = {
   analysis: ["analy", "understand", "explain", "inspect", "trace", "map"],
   implementation: ["implement", "build", "create", "add", "change", "modify", "feature"],
@@ -488,6 +515,9 @@ export function composePayload(payload, idea, options = {}) {
       languages: skill.languages ?? [],
       capabilities: skill.tags ?? [],
       assets: chosenAssets,
+      // Callable AI-tools this skill declares (scripts/hooks/tools with a known
+      // interpreter): names the host LLM can actually execute via tools run.
+      tools: callableToolsForSkill(skill),
       excerpts,
     };
   });

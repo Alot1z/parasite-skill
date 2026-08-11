@@ -9,6 +9,7 @@ import { cmdTools } from "../src/commands/tools.js";
 import { cmdAgentsRun } from "../src/commands/agents-run.js";
 import { cmdAgentsList } from "../src/commands/agents-list.js";
 import { cmdTrace } from "../src/commands/trace.js";
+import { cmdRefs } from "../src/commands/refs.js";
 import { cmdLlm } from "../src/commands/llm.js";
 import { buildEcosystemGraph, publicGraph } from "../src/ecosystem-graph.js";
 import { handleMessage } from "../src/mcp-server.js";
@@ -739,7 +740,12 @@ describe("agents run dry-run and trace aggregation", () => {
       expect(text).toContain("agent dry-run");
       expect(text).toContain("would run");
       expect(text).toContain("demo-skill__inspect");
-      expect(existsSync(join(registry, "agents"))).toBe(false);
+      // Preview reports are written, but the audit ledger stays untouched and
+      // the tool script never executed.
+      const files = readdirSync(join(registry, "agents"));
+      expect(files.some((name) => name.endsWith(".dryrun.json"))).toBe(true);
+      expect(files.some((name) => name.endsWith(".dryrun.md"))).toBe(true);
+      expect(files.some((name) => name.endsWith(".json") && !name.endsWith(".dryrun.json"))).toBe(false);
       expect(readToolRuns(registry)).toHaveLength(0);
     } finally {
       console.log = orig;
@@ -927,6 +933,263 @@ describe("MCP skill_tools_audit", () => {
     });
     expect(res.result.content[0].text).toContain("risky-skill__danger");
     expect(res.result.content[0].text).toContain('"risk": "high"');
+  });
+});
+
+describe("tools audit baseline and verify", () => {
+  test("--write-baseline seeds a baseline file and --baseline diffs drift", () => {
+    const { dirs, registry } = tempSkills({
+      "safe-skill/SKILL.md": "---\nname: safe-skill\ndescription: Safe tooling.\n---\n",
+      "safe-skill/scripts/benign.py": "print('hi')\n",
+      "risky-skill/SKILL.md": "---\nname: risky-skill\ndescription: Risky tooling.\n---\n",
+      // Initially benign so the baseline records low risk; a later rewrite to
+      // a dangerous pattern is then a genuine low->high regression.
+      "risky-skill/scripts/danger.py": "print('harmless for now')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "audit", writeBaseline: true })).toBe(0);
+      expect(out.join("\n")).toContain("baseline written");
+      expect(existsSync(join(registry, "tool-audit-baseline.json"))).toBe(true);
+      // No drift yet: baseline mode exits 0.
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "audit", baseline: true })).toBe(0);
+      expect(out.join("\n")).toContain("no drift");
+      // Regress the risky tool to a high-risk pattern: exit 1 + regression note.
+      writeFileSync(join(dirs, "risky-skill", "scripts", "danger.py"), "import os\nos.system('curl http://x')\n");
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "audit", baseline: true, force: true })).toBe(1);
+      expect(out.join("\n")).toContain("regression");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("audit --baseline without a baseline file exits 2 with guidance", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const origLog = console.log;
+    const origErr = console.error;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    console.error = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "audit", baseline: true })).toBe(2);
+      expect(out.join("\n")).toContain("no audit baseline found");
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+  });
+
+  test("tools verify checks scripts and policy, exit 1 when broken", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+      "ghost-skill/SKILL.md": "---\nname: ghost-skill\ndescription: Broken tooling.\n---\n",
+      "ghost-skill/scripts/gone.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // First scan registers both tools (files present) -> verify passes.
+      expect(cmdTools({ registry, dirs, toolsAction: "verify" })).toBe(0);
+      out.length = 0;
+      // Delete the ghost script: the cached registry still lists the asset, so
+      // verify now reports it missing and exits 1.
+      rmSync(join(dirs, "ghost-skill", "scripts", "gone.py"));
+      expect(cmdTools({ registry, dirs, toolsAction: "verify" })).toBe(1);
+      const text = out.join("\n");
+      expect(text).toContain("readiness check");
+      expect(text).toContain("missing");
+      // Restore the file: verify passes again from the same cached registry.
+      out.length = 0;
+      writeFileSync(join(dirs, "ghost-skill", "scripts", "gone.py"), 'print("hi")\n');
+      expect(cmdTools({ registry, dirs, toolsAction: "verify" })).toBe(0);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("tools history filters by name glob, skill glob, and status", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/ok.py": 'print("ok")\n',
+      "demo-skill/scripts/bad.py": "import sys; sys.exit(1)\n",
+    });
+    const payload = scan([dirs]);
+    runSkillTool(payload, "demo-skill__ok", "", { registry });
+    runSkillTool(payload, "demo-skill__bad", "", { registry });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "history", historyName: "*__bad" })).toBe(0);
+      const text = out.join("\n");
+      expect(text).toContain("demo-skill__bad");
+      expect(text).not.toContain("demo-skill__ok");
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "history", historySkill: "demo-skill", historyStatus: "ok" })).toBe(0);
+      const okOnly = out.join("\n");
+      expect(okOnly).toContain("demo-skill__ok");
+      expect(okOnly).not.toContain("demo-skill__bad");
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("tools run-batch json-args map and refs tools section", () => {
+  test("run-batch accepts a per-tool json-args map validated per schema", () => {
+    const { dirs, registry } = tempSkills({
+      "meta-skill/SKILL.md": [
+        "---",
+        "name: meta-skill",
+        "description: Tool metadata.",
+        "tools: |",
+        '  {"meta-skill__echo": {',
+        '    "argsSchema": { "type": "object", "properties": { "msg": { "type": "string" } }, "required": ["msg"] }',
+        "  }}",
+        "---",
+        "",
+      ].join("\n"),
+      "meta-skill/scripts/echo.py": "import sys\nprint('msg=' + next((a.split('=')[1] for a in sys.argv[1:] if a.startswith('msg=')), 'missing'))\n",
+    });
+    const origLog = console.log;
+    const origErr = console.error;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    console.error = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "run-batch", names: "meta-skill__echo", jsonArgs: '{"meta-skill__echo": {"msg": "hi from map"}}' })).toBe(0);
+      expect(out.join("\n")).toContain("msg=hi from map");
+      // Missing required field in the per-tool map: exit 3, tool skipped.
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "run-batch", names: "meta-skill__echo", jsonArgs: '{"meta-skill__echo": {}}' })).toBe(3);
+      expect(out.join("\n")).toContain("missing required arg");
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+  });
+
+  test("refs pages list each skill's callable AI-tools", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdRefs({ registry, dirs })).toBe(0);
+      const page = readFileSync(join(registry, "refs", "demo-skill", "index.md"), "utf-8");
+      expect(page).toContain("## Callable AI-Tools");
+      expect(page).toContain("demo-skill__hello");
+      expect(page).toContain("python");
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("compose per-skill tools and agents strict", () => {
+  test("composePayload lists callable tools per selected skill matching listSkillTools", () => {
+    const { dirs } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+      "demo-skill/hooks/check.sh": "#!/usr/bin/env bash\necho checked\n",
+      "demo-skill/references/guide.md": "not a tool",
+    });
+    const payload = scan([dirs]);
+    const runtime = composePayload(payload, "debug failing tests", { top: 5 });
+    const demo = runtime.selectedSkills.find((skill) => skill.name === "demo-skill");
+    expect(demo).toBeTruthy();
+    expect(Array.isArray(demo.tools)).toBe(true);
+    const names = demo.tools.map((tool: { name: string }) => tool.name).sort();
+    const expected = listSkillTools(payload).filter((tool) => tool.skill === "demo-skill").map((tool) => tool.name).sort();
+    expect(names).toEqual(expected);
+    expect(names).toContain("demo-skill__hello");
+    expect(names).toContain("demo-skill__check");
+    // The reference file is not listed as a tool.
+    expect(names.some((name) => name.includes("guide"))).toBe(false);
+    const hello = demo.tools.find((tool: { name: string }) => tool.name === "demo-skill__hello");
+    expect(hello.language).toBe("python");
+  });
+
+  test("compose tools include declared argsSchema presence", () => {
+    const { dirs } = tempSkills({
+      "meta-skill/SKILL.md": [
+        "---",
+        "name: meta-skill",
+        "description: Tool metadata.",
+        "tools: |",
+        '  {"meta-skill__hello": { "argsSchema": { "type": "object" } }}',
+        "---",
+        "",
+      ].join("\n"),
+      "meta-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const payload = scan([dirs]);
+    const runtime = composePayload(payload, "tool metadata", { top: 5 });
+    const meta = runtime.selectedSkills.find((skill) => skill.name === "meta-skill");
+    expect(meta).toBeTruthy();
+    expect(meta.tools.find((tool: { name: string }) => tool.name === "meta-skill__hello").argsSchema).toBe(true);
+  });
+
+  test("agents run --dry-run writes preview reports and --strict exits 2 on blocked tools", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/inspect.py": "import sys\nprint('inspected')\n",
+    });
+    const policy = { deny: ["demo-skill__*"] };
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // Non-strict dry-run: blocked tools reported, exit 0, report files written.
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], dryRun: true, maxTools: 4, tools: policy })).toBe(0);
+      expect(out.join("\n")).toContain("blocked");
+      const files = readdirSync(join(registry, "agents"));
+      expect(files.some((name) => name.endsWith(".dryrun.json"))).toBe(true);
+      expect(files.some((name) => name.endsWith(".dryrun.md"))).toBe(true);
+      const dry = JSON.parse(
+        readFileSync(join(registry, "agents", files.find((name) => name.endsWith(".dryrun.json")) as string), "utf-8"),
+      );
+      expect(dry.nothing_executed).toBe(true);
+      expect(dry.blocked.length).toBeGreaterThan(0);
+      expect(dry.blocked[0].name).toBe("demo-skill__inspect");
+      expect(readToolRuns(registry)).toHaveLength(0);
+      // Strict: blocked tools become a hard failure.
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], dryRun: true, maxTools: 4, tools: policy, strict: true })).toBe(2);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("agents run --strict exits 2 when a real run hits policy-blocked tools", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/inspect.py": "import sys\nprint('inspected')\n",
+    });
+    const policy = { deny: ["demo-skill__*"] };
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], maxTools: 4, tools: policy })).toBe(0);
+      expect(out.join("\n")).toContain("denied by project policy");
+      out.length = 0;
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], maxTools: 4, tools: policy, strict: true })).toBe(2);
+    } finally {
+      console.log = orig;
+    }
   });
 });
 

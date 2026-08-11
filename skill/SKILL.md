@@ -59,11 +59,13 @@ parasite-skill tools run-batch a,b,c [--args STR] [--continue]
 parasite-skill tools run <name> --json-args '{"port": 8080}'  # schema-validated
 parasite-skill tools dry-run <name> [--args STR]   # preview, never execute
 parasite-skill tools audit [--threshold high]      # static risk scan
+parasite-skill tools audit --baseline              # diff vs persisted baseline
+parasite-skill tools verify                       # readiness: scripts/policy/schemas
 parasite-skill tools docs                         # generate registry/TOOLS.md
 parasite-skill tools policy --allow "a__*" --deny "b__*" [--dry-run]
-parasite-skill tools history [--clear]             # execution audit ledger
+parasite-skill tools history [--clear] [--name G] [--skill G] [--status ok|fail]
 parasite-skill agents list|show <profile>          # inspect profiles, no run
-parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run]
+parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run] [--strict]
 parasite-skill agents run --all "<request>"        # every profile once
 parasite-skill plan "<request>" --auto   # auto-max: pin the always-on cadence
 ```
@@ -80,10 +82,16 @@ run and which environment keys reach them; skills may declare per-tool
 and `--json-args` validates structured arguments against that schema before
 execution (exit 3 on invalid). `tools policy` edits the gate from the CLI.
 `agents run --dry-run` previews every command a profile would run without
-executing; `trace <file|dir>` aggregates skill mentions plus ledger tool runs
-(`--json` for the AI layer). `llm` exposes tools as native functions,
-presents declared schemas to the model, and executes tool calls in a bounded
-loop.
+executing and writes `agents/<profile>-<request>.dryrun.md` + `.json` preview
+reports; `--strict` turns any policy-blocked tool into a hard failure (exit 2).
+`tools audit --write-baseline` persists expected per-tool risk and
+`--baseline` exits 1 on drift/regression; `tools verify` checks scripts,
+policy, and schema shape (exit 1 when broken); `tools history` filters the
+ledger by name/skill/status. `refs` pages list each skill's callable AI-tools,
+and `compose` includes the callable tools per selected skill. `trace <file|dir>`
+aggregates skill mentions plus ledger tool runs (`--json` for the AI layer).
+`llm` exposes tools as native functions, presents declared schemas to the
+model, and executes tool calls in a bounded loop.
 
 ## Always-on cadence
 

@@ -16,6 +16,10 @@
 
 {{references_list}}
 
+## Callable AI-Tools
+
+{{tools_list}}
+
 ## When to load
 
 Load the full SKILL.md body only when the task matches the description above. Load individual scripts/references on demand (progressive disclosure tier 3).

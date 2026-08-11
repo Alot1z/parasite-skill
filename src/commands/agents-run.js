@@ -69,14 +69,16 @@ function runProfile(profile, request, { payload, sets, reg, policyConfig, maxToo
           duration_ms: 0,
         });
       } catch (err) {
-        toolRuns.push({ ok: false, name: tool.name, skill: tool.skill, status: 2, stderr: String(err.message ?? err), duration_ms: 0 });
+        const blocked = err.code === "TOOL_DENIED" || err.code === "TOOL_NOT_ALLOWED";
+        toolRuns.push({ ok: false, blocked, name: tool.name, skill: tool.skill, status: 2, stderr: String(err.message ?? err), duration_ms: 0 });
       }
       continue;
     }
     try {
       toolRuns.push(runSkillTool(payload, tool.name, request, { timeoutMs: runTimeoutMs, policy, registry: reg }));
     } catch (err) {
-      toolRuns.push({ ok: false, name: tool.name, skill: tool.skill, status: 2, stderr: String(err.message ?? err), duration_ms: 0 });
+      const blocked = err.code === "TOOL_DENIED" || err.code === "TOOL_NOT_ALLOWED";
+      toolRuns.push({ ok: false, blocked, name: tool.name, skill: tool.skill, status: 2, stderr: String(err.message ?? err), duration_ms: 0 });
     }
   }
 
@@ -129,6 +131,43 @@ export function cmdAgentsRun(args = {}) {
       runProfile(name, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun }),
     );
     if (args.dryRun) {
+      const dir = join(reg, "agents");
+      mkdirSync(dir, { recursive: true });
+      const base = `all-${slugify(request)}`;
+      const blockedTotal = reports.reduce((n, report) => n + report.runs.filter((run) => run.blocked).length, 0);
+      const dryRunReport = {
+        kind: "parasite-skill-agent-dry-run-all",
+        request,
+        profiles: reports.length,
+        nothing_executed: true,
+        blocked_total: blockedTotal,
+        strict: args.strict === true,
+        reports: reports.map((report) => ({
+          profile: report.profile,
+          profile_desc: report.profile_desc,
+          selected_skills: report.decision.selectedSkills.map((skill) => skill.name),
+          would_run: report.runs.filter((run) => run.ok).map((run) => ({ name: run.name, skill: run.skill, command: run.command, argv: run.argv.map(String), cwd: run.cwd, timeout_ms: run.timeout_ms })),
+          blocked: report.runs.filter((run) => run.blocked).map((run) => ({ name: run.name, reason: run.stderr })),
+        })),
+      };
+      writeFileSync(join(dir, `${base}.dryrun.json`), JSON.stringify(dryRunReport, null, 2) + "\n", "utf-8");
+      const md = [
+        `# Agent Dry-Run: all profiles`,
+        "",
+        `Request: ${request}`,
+        "Nothing was executed; the audit ledger was not touched.",
+        `Blocked by policy: ${blockedTotal}`, "",
+        ...reports.map((report) => [
+          `## ${report.profile} — ${report.profile_desc}`,
+          `Set: ${report.decision.selectedSet}`, "",
+          "### Would run",
+          ...(report.runs.filter((run) => run.ok).map((run) => `- ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)}`)),
+          "",
+          ...(report.runs.some((run) => run.blocked) ? ["### Blocked by policy", ...report.runs.filter((run) => run.blocked).map((run) => `- ${run.name}: ${run.stderr}`), ""] : []),
+        ]).flat(),
+        `Report: ${base}.dryrun.json`,
+      ];
+      writeFileSync(join(dir, `${base}.dryrun.md`), md.join("\n") + "\n", "utf-8");
       console.log(`${smallLogo()} agent dry-run: all ${reports.length} profiles (nothing executed)`);
       for (const report of reports) {
         const wouldRun = report.runs.filter((run) => run.ok);
@@ -136,12 +175,13 @@ export function cmdAgentsRun(args = {}) {
         for (const run of wouldRun) {
           console.log(`    - ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)}`);
         }
-        for (const blocked of report.runs.filter((run) => !run.ok)) {
+        for (const blocked of report.runs.filter((run) => run.blocked)) {
           console.log(`    - ${blocked.name}: blocked — ${blocked.stderr}`);
         }
       }
-      console.log("  ledger untouched; no reports written");
-      return 0;
+      console.log(`  report: ${fmt(join(dir, `${base}.dryrun.md`))} (ledger untouched)`);
+      // --strict turns policy-blocked tools into a hard failure (exit 2).
+      return args.strict === true && blockedTotal > 0 ? 2 : 0;
     }
     const combined = {
       kind: "parasite-skill-agent-run-all",
@@ -176,6 +216,7 @@ export function cmdAgentsRun(args = {}) {
     console.log(`  request: ${request}`);
     console.log(`  tools: ${combined.successful_tools}/${combined.total_tools} succeeded (deduped across profiles)`);
     console.log(`  report: ${fmt(join(dir, `${base}.md`))}`);
+    if (args.strict === true && reports.some((report) => report.runs.some((run) => run.blocked))) return 2;
     return 0;
   }
 
@@ -192,19 +233,53 @@ export function cmdAgentsRun(args = {}) {
   const ranTools = new Set();
   const report = runProfile(profile, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun });
   if (args.dryRun) {
+    const dir = join(reg, "agents");
+    mkdirSync(dir, { recursive: true });
+    const base = `${profile}-${slugify(request)}`;
+    const wouldRun = report.runs.filter((run) => run.ok);
+    const blocked = report.runs.filter((run) => run.blocked);
+    const dryRunReport = {
+      kind: "parasite-skill-agent-dry-run",
+      profile,
+      profile_desc: report.profile_desc,
+      request,
+      nothing_executed: true,
+      blocked_count: blocked.length,
+      strict: args.strict === true,
+      selected_skills: report.decision.selectedSkills.map((skill) => ({ name: skill.name, score: skill.score })),
+      would_run: wouldRun.map((run) => ({ name: run.name, skill: run.skill, command: run.command, argv: run.argv.map(String), cwd: run.cwd, timeout_ms: run.timeout_ms })),
+      blocked: blocked.map((run) => ({ name: run.name, reason: run.stderr })),
+    };
+    writeFileSync(join(dir, `${base}.dryrun.json`), JSON.stringify(dryRunReport, null, 2) + "\n", "utf-8");
+    const md = [
+      `# Agent Dry-Run: ${profile}`,
+      "",
+      report.profile_desc,
+      "",
+      `Request: ${request}`,
+      "Nothing was executed; the audit ledger was not touched.",
+      `Selected skills: ${report.decision.selectedSkills.map((skill) => skill.name).join(", ") || "none"}`,
+      "",
+      "## Would run",
+      ...(wouldRun.length ? wouldRun.map((run) => `- ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)} (cwd ${run.cwd})`) : ["- none"]),
+      "",
+      ...(blocked.length ? ["## Blocked by policy", ...blocked.map((run) => `- ${run.name}: ${run.stderr}`), ""] : []),
+      `Report: ${base}.dryrun.json`,
+    ];
+    writeFileSync(join(dir, `${base}.dryrun.md`), md.join("\n") + "\n", "utf-8");
     console.log(`${smallLogo()} agent dry-run: ${profile} (nothing executed)`);
     console.log(`  request: ${request}`);
     console.log(`  skills:  ${report.decision.selectedSkills.map((skill) => skill.name).join(", ") || "none"}`);
-    const wouldRun = report.runs.filter((run) => run.ok);
     console.log(`  tools:   ${wouldRun.length}/${report.runs.length} would run`);
     for (const run of wouldRun) {
       console.log(`    - ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)} (cwd ${run.cwd})`);
     }
-    for (const blocked of report.runs.filter((run) => !run.ok)) {
-      console.log(`    - ${blocked.name}: blocked — ${blocked.stderr}`);
+    for (const blockedRun of blocked) {
+      console.log(`    - ${blockedRun.name}: blocked — ${blockedRun.stderr}`);
     }
-    console.log("  ledger untouched; no reports written");
-    return 0;
+    console.log(`  report: ${fmt(join(dir, `${base}.dryrun.md`))} (ledger untouched)`);
+    // --strict turns policy-blocked tools into a hard failure (exit 2).
+    return args.strict === true && blocked.length > 0 ? 2 : 0;
   }
   const dir = join(reg, "agents");
   mkdirSync(dir, { recursive: true });
@@ -247,11 +322,15 @@ export function cmdAgentsRun(args = {}) {
     console.log(`    - ${run.name}: ${mark} (${run.duration_ms}ms)`);
   }
   for (const run of report.runs) {
+    if (run.blocked) console.log(`    - ${run.name}: blocked — ${run.stderr}`);
     if (run.stdout) {
       const echoed = run.stdout.slice(0, 400).replace(/\n/g, "\n    ");
       console.log(`    | ${echoed}`);
     }
   }
   console.log(`  report: ${fmt(join(dir, `${base}.md`))}`);
+  // --strict turns policy-blocked tools into a hard failure (exit 2), so CI
+  // and scripted callers can treat a partially-blocked agent run as a gate.
+  if (args.strict === true && report.runs.some((run) => run.blocked)) return 2;
   return 0;
 }
