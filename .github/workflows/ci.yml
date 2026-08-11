@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Reject co-author trailers
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          else
+            before="${{ github.event.before }}"
+            if [ -z "$before" ] || [[ "$before" =~ ^0+$ ]]; then
+              # Initial pushes have no usable before SHA; inspect every reachable commit.
+              range="--all"
+            else
+              range="$before..${{ github.sha }}"
+            fi
+          fi
+          if git log --format=%B "$range" | grep -Eiq '^[[:space:]]*Co-authored-by:'; then
+            echo "Co-authored-by trailers are not permitted in this repository."
+            exit 1
+          fi
+      - name: Syntax and compile checks
+        run: npm run check
+      - name: Test suite
+        run: npm test -- --runInBand
+      - name: Package dry run
+        run: npm pack --dry-run --json > /tmp/pack.json
+      - name: Reject generated caches in package
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open('/tmp/pack.json'))[0]
+          files = [entry['path'] for entry in data['files']]
+          bad = [p for p in files if '__pycache__' in p or p.endswith('.pyc') or p.startswith('tests/')]
+          if bad:
+              raise SystemExit(f'forbidden package files: {bad}')
+          print(f'package hygiene ok: {len(files)} files')
+          PY
+      - name: Packed package smoke test
+        run: npm run pack:smoke

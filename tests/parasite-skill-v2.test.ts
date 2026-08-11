@@ -7,6 +7,9 @@ import { loadSets, saveCustomSets } from "../src/engine.js";
 import { mcpRuntime, mcpServerEntry } from "../src/mcp-register.js";
 import { cmdGraph } from "../src/commands/graph.js";
 import { cmdBundle } from "../src/commands/bundle.js";
+import { buildEcosystemGraph } from "../src/ecosystem-graph.js";
+import { AGENT_PROFILES } from "../src/data/agent-profiles.js";
+import { publicGraph } from "../src/ecosystem-graph.js";
 
 describe("tui helpers", () => {
   test("progressBar renders fraction + percent", () => {
@@ -86,6 +89,29 @@ describe("graph command", () => {
       console.log = origLog;
       console.error = origErr;
     }
+  });
+});
+
+describe("typed ecosystem graph", () => {
+  test("connects skills, sets, assets, agents, and tools", () => {
+    const graph = buildEcosystemGraph({
+      skills: [{ name: "alpha-skill", path: "/tmp/alpha", tags: ["api"], spec_ok: true, assets: [{ path: "scripts/run.py", group: "scripts", language: "python", bytes: 10, excerptable: false }] }],
+      sets: { "agent-test": { desc: "test", members: ["alpha-skill"] } },
+      clients: [{ id: "cursor", label: "Cursor", installed: true, path: "/tmp/cursor" }],
+      extensions: [{ client: "cursor", label: "Cursor", injections: 1, active: 1, path: "/tmp/ext" }],
+      mcp: [{ id: "cursor", label: "Cursor", registered: true, file: "/tmp/mcp.json" }],
+      rules: { global: ["/tmp/AGENTS.md"], per_client: [] },
+      profiles: { "agent-test": AGENT_PROFILES["ecosystem-architect"] },
+    });
+    expect(graph.kind).toBe("parasite-skill-ecosystem-graph");
+    expect(graph.nodes.some((node) => node.type === "asset")).toBe(true);
+    expect(graph.nodes.some((node) => node.type === "agent")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "includes")).toBe(true);
+    expect(graph.edges.some((edge) => edge.relation === "may-call")).toBe(true);
+    expect(graph.privacy).toContain("no contents");
+    const published = publicGraph(graph);
+    expect(published.nodes.every((node) => !Object.hasOwn(node, "path"))).toBe(true);
+    expect(published.privacy).toContain("removed");
   });
 });
 

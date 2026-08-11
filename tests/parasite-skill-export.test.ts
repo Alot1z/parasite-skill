@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { cmdExport } from "../src/commands/export.js";
 import { cmdSets } from "../src/commands/sets.js";
 import { SETS } from "../src/data/sets.js";
+import { publicGraph } from "../src/ecosystem-graph.js";
 
 function tmpSkill(root, name, desc) {
   const dir = join(root, name);
@@ -71,11 +72,15 @@ describe("cmdExport", () => {
         expect(Array.isArray(j.extensions)).toBe(true);
         expect(Array.isArray(j.mcp)).toBe(true);
         expect(Array.isArray(j.rules.global)).toBe(true);
+        expect(j.agents["ecosystem-architect"]).toBeDefined();
+        expect(j.graph.kind).toBe("parasite-skill-ecosystem-graph");
+        expect(publicGraph(j.graph).nodes.every((node) => !Object.hasOwn(node, "path"))).toBe(true);
 
         const md = readFileSync(mdPath, "utf-8");
         expect(md).toContain("# Parasite Skill Ecosystem");
         expect(md).toContain("alpha-skill");
         expect(md).toContain("brainstorm-max");
+        expect(md).toContain("ecosystem-architect");
         // no contents, no secrets — only names/paths
         expect(md).not.toContain("an alpha test skill");
       } finally {

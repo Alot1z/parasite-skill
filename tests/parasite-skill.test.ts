@@ -6,6 +6,7 @@ import {
   parseFrontmatter,
   scan,
   scoreIdea,
+  composePayload,
   stem,
   tokenize,
 } from "../src/engine.js";
@@ -113,6 +114,90 @@ describe("scoreIdea", () => {
     expect(s.bodyKeywords).toContain("oauth2");
     const { scored } = scoreIdea(payload, "oauth2 jwt session management");
     expect(scored[0][0]).toBe("auth-skill");
+  });
+
+  test("composePayload selects explicit skills and bounds asset excerpts", () => {
+    const base = join(tmpdir(), `sr-compose-${Date.now()}`);
+    mkdirSync(join(base, "docs-skill", "references"), { recursive: true });
+    mkdirSync(join(base, "docs-skill", "templates"), { recursive: true });
+    mkdirSync(join(base, "docs-skill", "scripts"), { recursive: true });
+    writeFileSync(
+      join(base, "docs-skill", "SKILL.md"),
+      "---\\nname: docs-skill\\ndescription: Write API documentation and guides.\\n---\\n# Procedure\\nWrite clear docs for owner@example.com at C:/Users/private/project.",
+    );
+    writeFileSync(join(base, "docs-skill", "references", "routing.md"), "# Routing\\nUse the selected documentation procedure for this request.");
+    writeFileSync(join(base, "docs-skill", "templates", "guide.md"), "# Guide\\nDocument the API with examples.");
+    writeFileSync(join(base, "docs-skill", "scripts", "build.js"), "console.log('tool');");
+    const payload = scan([base]);
+    const runtime = composePayload(payload, "use docs-skill to document the api", { top: 1, maxChars: 80 });
+    expect(runtime.kind).toBe("parasite-skill-runtime-payload");
+    expect(runtime.decision.explicitSkills).toEqual(["docs-skill"]);
+    expect(runtime.selectedSkills[0].name).toBe("docs-skill");
+    expect(runtime.loading.excerptChars).toBeLessThanOrEqual(80);
+    expect(runtime.privacy.sanitization).toContain("best-effort");
+    expect(runtime.execution.tools[0].group).toBe("scripts");
+    expect(JSON.stringify(runtime)).not.toContain(base);
+    expect(JSON.stringify(runtime)).not.toContain("owner@example.com");
+    expect(JSON.stringify(runtime)).not.toContain("C:/Users/private/project");
+  });
+
+  test("composePayload applies enabled-set and exclusion filters", () => {
+    const base = join(tmpdir(), `sr-compose-filters-${Date.now()}`);
+    for (const [name, description] of [
+      ["docs-skill", "Write API documentation."],
+      ["build-skill", "Implement API integrations."],
+    ]) {
+      mkdirSync(join(base, name), { recursive: true });
+      writeFileSync(join(base, name, "SKILL.md"), `---\\nname: ${name}\\ndescription: ${description}\\n---\\n`);
+    }
+    const payload = scan([base]);
+    const sets = {
+      docs: { desc: "docs only", members: ["docs-skill"] },
+      build: { desc: "build only", members: ["build-skill"] },
+    };
+    const runtime = composePayload(payload, "document the api", {
+      sets,
+      enabledSets: ["docs"],
+      excludeSkills: ["build-skill"],
+      top: 4,
+      maxChars: 0,
+    });
+    expect(runtime.selectedSkills.map((skill) => skill.name)).toEqual(["docs-skill"]);
+    expect(runtime.decision.selectedSkillSet).toBe("docs");
+
+    const empty = composePayload(payload, "document the api", {
+      sets,
+      enabledSets: ["missing-set"],
+      top: 4,
+      maxChars: 0,
+    });
+    expect(empty.selectedSkills).toEqual([]);
+  });
+
+  test("composePayload redacts metadata as well as excerpts", () => {
+    const base = join(tmpdir(), `sr-compose-redaction-${Date.now()}`);
+    mkdirSync(join(base, "docs-skill", "references"), { recursive: true });
+    writeFileSync(
+      join(base, "docs-skill", "SKILL.md"),
+      [
+        "---",
+        "name: docs-skill",
+        "description: Document owner@example.com from C:/Users/private/project.",
+        "---",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(base, "docs-skill", "references", "private-doc.md"),
+      ["# Secret", "owner@example.com token=abc123"].join("\n"),
+    );
+    const payload = scan([base]);
+    const runtime = composePayload(payload, "document docs-skill", { top: 1, maxChars: 500 });
+    const serialized = JSON.stringify(runtime);
+    expect(serialized).not.toContain("owner@example.com");
+    expect(serialized).not.toContain("C:/Users/private");
+    expect(serialized).not.toContain("token=abc123");
+    expect(runtime.selectedSkills[0].description).toContain("<email-redacted>");
   });
 
   test("description keywords outrank body-only keywords", () => {

@@ -9,3 +9,7 @@ history/
 refs/
 wikis/
 .bundle-tmp
+.git/
+.github/
+tests/
+design.md

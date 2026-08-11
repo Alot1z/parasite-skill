@@ -34,22 +34,39 @@ COMMANDS
   wikis     Generate the wiki + graph
   export    Inventory the whole ecosystem (skills, sets, clients, extensions,
             MCP, rules) -> ECOSYSTEM.md + ecosystem.json (human + LLM ready)
-  plan      "<request>"     Emit a routed execution plan
+  plan      "<request>"     Emit a routed execution plan using an adaptive payload
+  compose   "<request>"     Select skills/assets and emit a compact runtime payload
+  llm       "<request>"     Send bounded payload to an opt-in OpenAI-compatible endpoint
+  history   discover|import Safely discover/import Freebuff transcripts
   trace     <file>          Count skill usage in a transcript
   link      Create/remove per-skill refs/wiki links (--unlink, --no-default)
   mcp       MCP control: add|remove|list register/remove the parasite-skill MCP
             server in client configs (no manual config); bare mcp runs the server
-  bundle    Build a tarball + install.json manifest for GitHub Pages distribution
+  bundle    Build a tarball + install.json manifest for GitHub Pages distribution (--out, --meta)
   sync      Cloud-sync the skills tree to a git remote (--init URL | --push | --pull)
   agents    Generate AGENTS.md for the current project (--out PATH)
-  graph     Emit a skill-relatedness graph (--dot | --mmd, --top N, --threshold X)
-  --version | --help
-
-GLOBAL FLAGS
+  graph     Emit a skill or typed ecosystem graph (--ecosystem, --json | --dot | --mmd, --top N, --threshold X)
+  --version | --help  GLOBAL FLAGS
   --registry DIR   Central registry dir (default ~/.agents/skills/.parasite-skill)
   --dirs a,b       Extra scan dirs
   --force          Force rescan / fresh load / replace existing installs
   --json           Machine-readable output
+  --max-chars N    Bound composed excerpts or imported history
+  --public         Remove filesystem paths from published graph output
+
+LLM FLAGS
+  --endpoint URL   OpenAI-compatible /chat/completions endpoint
+  --allow-remote   Allow external HTTPS LLM endpoints (default: local-only)
+  --model NAME     Model name
+  --api-key KEY    Optional bearer key (prefer PARASITE_SKILL_LLM_API_KEY)
+  --timeout MS     Request timeout
+  --max-output-tokens N  Bound model output tokens (default 1200)
+  --max-response-chars N Bound response text (default 200000)
+
+HISTORY FLAGS
+  --file PATH      Transcript file for history import or trace
+  --history-dirs   Extra comma-separated discovery directories
+
 
 PARASITE FLAGS
   --status         Show injection status for all clients
@@ -129,9 +146,12 @@ export function parseFlags(argv) {
       case "--pull": flags.pull = true; break;
       case "--status": flags.status = true; break;
       case "--threshold": { const v = value(++i, a); if (v !== undefined) flags.threshold = v; break; }
+      case "--ecosystem": flags.ecosystem = true; break;
+      case "--public": flags.public = true; break;
       case "--dot": flags.dot = true; break;
       case "--mmd": flags.mmd = true; break;
       case "--out": { const v = value(++i, a); if (v !== undefined) flags.out = v; break; }
+      case "--meta": { const v = value(++i, a); if (v !== undefined) flags.meta = v; break; }
       case "--runtime": { const v = value(++i, a); if (v !== undefined) flags.runtime = v; break; }
       case "--clients": { const v = value(++i, a); if (v !== undefined) flags.clients = v.split(",").map((x) => x.trim()).filter(Boolean); break; }
       case "--agent": case "-a": {
@@ -152,6 +172,15 @@ export function parseFlags(argv) {
       case "--file": { const v = value(++i, a); if (v !== undefined) flags.file = v; break; }
       case "--level": { const v = value(++i, a); if (v !== undefined) flags.level = v; break; }
       case "--format": { const v = value(++i, a); if (v !== undefined) flags.format = v; break; }
+      case "--max-chars": { const v = value(++i, a); if (v !== undefined) flags.maxChars = num(v); break; }
+      case "--endpoint": { const v = value(++i, a); if (v !== undefined) flags.endpoint = v; break; }
+      case "--allow-remote": flags.allowRemote = true; break;
+      case "--model": { const v = value(++i, a); if (v !== undefined) flags.model = v; break; }
+      case "--api-key": { const v = value(++i, a); if (v !== undefined) flags.apiKey = v; break; }
+      case "--timeout": { const v = value(++i, a); if (v !== undefined) flags.timeout = num(v); break; }
+      case "--max-output-tokens": { const v = value(++i, a); if (v !== undefined) flags.maxOutputTokens = num(v); break; }
+      case "--max-response-chars": { const v = value(++i, a); if (v !== undefined) flags.maxResponseChars = num(v); break; }
+      case "--history-dirs": { const v = value(++i, a); if (v !== undefined) flags.historyDirs = v; break; }
       case "--server": { const v = value(++i, a); if (v !== undefined) flags.server = v; break; }
       default:
         if (a.startsWith("-")) {
@@ -186,7 +215,13 @@ export async function run(argv) {
 
   // Load project config and merge with CLI flags
   const projectConfig = loadProjectConfig();
-  const ctx = { ...mergeConfig(projectConfig, flags), idea: arg, request: arg, file: rest[0] };
+  const ctx = {
+    ...mergeConfig(projectConfig, flags),
+    idea: arg,
+    request: arg,
+    historyAction: cmd === "history" ? rest[0] : undefined,
+    file: flags.file ?? (cmd === "trace" ? rest[0] : undefined),
+  };
 
   // Log config source if verbose
   if (projectConfig && process.env.PARASITE_SKILL_VERBOSE) {
@@ -205,8 +240,11 @@ export async function run(argv) {
     case "sets": return commands.cmdSets(ctx);
     case "refs": return commands.cmdRefs(ctx);
     case "wikis": return commands.cmdWikis(ctx);
-    case "export": return commands.cmdExport(ctx);
-    case "plan": return commands.cmdPlan(ctx);
+    case "export": return commands.cmdExport(ctx);      case "plan": return commands.cmdPlan(ctx);
+    case "compose": return commands.cmdCompose(ctx);
+    case "llm": return await commands.cmdLlm(ctx);
+    case "history": return commands.cmdHistory(ctx);
+
     case "trace": return commands.cmdTrace(ctx);
     case "link": return commands.cmdLink(ctx);
     case "bundle": return commands.cmdBundle(ctx);

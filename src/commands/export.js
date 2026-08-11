@@ -12,6 +12,8 @@ import { VERSION, loadProjectConfig, loadRegistry, loadSetsWithProject, registry
 import { CLIENTS, SKILL_NAME } from "../clients.js";
 import { getInjectionStatus } from "../parasite/index.js";
 import { mcpRegistrationStatus } from "../mcp-register.js";
+import { AGENT_PROFILES } from "../data/agent-profiles.js";
+import { buildEcosystemGraph } from "../ecosystem-graph.js";
 import { fmt } from "./_lib.js";
 
 // Rule/config files checked for existence only (no contents).
@@ -145,6 +147,16 @@ export function cmdExport(args) {
     extensions,
     mcp,
     rules: { global: globalRules, per_client: perClientRules },
+    agents: AGENT_PROFILES,
+    graph: buildEcosystemGraph({
+      skills,
+      sets,
+      clients,
+      extensions,
+      mcp,
+      rules: { global: globalRules, per_client: perClientRules },
+      profiles: AGENT_PROFILES,
+    }),
     project_config: projectInfo,
     note: "Paths and names only — no file contents or secrets. Regenerate with: parasite-skill export",
   };
@@ -190,6 +202,8 @@ export function cmdExport(args) {
     for (const e of activeExts) md.push(`| ${e.label} | ${e.injections} | ${e.active} | ${e.path} |`);
     md.push("");
   }
+
+  md.push("## Agent Profiles", "", ...Object.entries(AGENT_PROFILES).map(([name, profile]) => `- **${name}** — ${profile.desc}`), "");
 
   md.push("## MCP Registrations", "", `| Target | Registered | File |`, `|---|---|---|`);
   for (const m of mcp) md.push(`| ${m.label} | ${m.registered ? "yes" : "-"} | ${m.file} |`);

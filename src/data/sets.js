@@ -17,6 +17,15 @@ export const SETS = {
   "thinking-max": { desc: "Full before/during/after thinking cadence", members: ["tractatus-thinking", "sequential-thinking", "doubt-driven-development", "debug-thinking", "verification-before-completion"] },
   "mega-injector": { desc: "Connect, wrap, inject, extend anything", members: ["system-connector", "mcp-builder", "api-and-interface-design", "security-and-hardening", "cli-anything", "computer-use"] },
   "token-saver": { desc: "Max token + context efficiency", members: ["agent-token-optimizer", "context-engineering", "prompt-optimizer", "stop-slop", "workspace-memory"] },
+
+  // Declarative role sets. Runtime behavior still requires an explicit adapter
+  // or MCP/client permission; a set never grants hidden access by itself.
+  "agent-ecosystem": { desc: "Map and evolve the ecosystem safely", members: ["ix", "understand", "code-review-graph", "api-and-interface-design", "documentation-and-adrs"] },
+  "agent-release": { desc: "Verify, package, publish, and roll back", members: ["git-workflow-and-versioning", "ci-cd-and-automation", "github-actions-docs", "shipping-and-launch", "verification-before-completion"] },
+  "agent-security": { desc: "Threat-model all boundaries", members: ["security-and-hardening", "doubt-driven-development", "code-review-and-quality", "debugging-and-error-recovery"] },
+  "agent-mcp": { desc: "Connect supported MCP clients safely", members: ["mcp-builder", "system-connector", "api-and-interface-design", "security-and-hardening"] },
+  "agent-frontend": { desc: "Build and verify public-facing views", members: ["frontend-design", "frontend-ui-engineering", "browser-testing-with-devtools", "webapp-testing", "playwright-cli"] },
+  "agent-history": { desc: "Recover explicitly selected transcripts", members: ["workspace-memory", "security-and-hardening", "documentation-writer", "verification-before-completion"] },
 };
 
 // Multiplicative pairs: outcome = product of members; any missing factor fails it.

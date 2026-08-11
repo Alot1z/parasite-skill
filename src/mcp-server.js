@@ -5,12 +5,14 @@ import { createInterface } from "node:readline";
 import { VERSION } from "./engine.js";
 import {
   cmdPlan,
+  cmdCompose,
   cmdRefs,
   cmdRoute,
   cmdScan,
   cmdSets,
   cmdValidate,
   cmdWikis,
+  cmdGraph,
 } from "./commands/index.js";
 import { runList } from "./clients.js";
 
@@ -48,8 +50,31 @@ const TOOLS = [
   },
   {
     name: "plan",
-    description: "Emit a routed execution plan for a request with the always-on cadence phases.",
-    inputSchema: { type: "object", properties: { request: { type: "string" } }, required: ["request"] },
+    description: "Emit a concise routed execution plan backed by selected skills and on-demand assets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        request: { type: "string" },
+        top: { type: "number" },
+        maxChars: { type: "number" },
+        enabledSets: { type: "array", items: { type: "string" } },
+        excludeSkills: { type: "array", items: { type: "string" } },
+      },
+      required: ["request"],
+    },
+  },
+  {
+    name: "compose",
+    description: "Select relevant skills, references, templates, scripts, hooks, and tools; emit a bounded runtime payload without dumping the ecosystem.",
+    inputSchema: { type: "object",      properties: {
+        idea: { type: "string" },
+        top: { type: "number" },
+        maxChars: { type: "number" },
+        enabledSets: { type: "array", items: { type: "string" } },
+        excludeSkills: { type: "array", items: { type: "string" } },
+      },
+      required: ["idea"],
+    },
   },
   {
     name: "refs",
@@ -58,8 +83,13 @@ const TOOLS = [
   },
   {
     name: "wikis",
-    description: "Generate the wiki (Home, Categories, Skills, SkillSets, MultiplicativePairs, graph).",
+    description: "Generate the wiki, typed ecosystem graph, and declarative agent profile pages.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "graph",
+    description: "Emit a typed ecosystem graph of skills, sets, assets, clients, extensions, MCP targets, rules, agents, and tools.",
+    inputSchema: { type: "object", properties: { format: { type: "string", enum: ["json", "dot", "mmd"] } } },
   },
   {
     name: "list_installs",
@@ -78,7 +108,18 @@ function toolResult(text) {
 // call. All commands emit synchronously, so nothing can leak into the JSON-RPC stream;
 // keep command handlers synchronous (no timers / deferred logs).
 function runTool(name, params = {}) {
-  const ctx = { ...params, idea: params.idea ?? params.request, request: params.request, top: params.top, apply: params.apply, dirs: params.dirs };
+  const ctx = {
+    ...params,
+    idea: params.idea ?? params.request,
+    request: params.request,
+    top: params.top,
+    maxChars: params.maxChars,
+    enabledSets: params.enabledSets,
+    excludeSkills: params.excludeSkills,
+    apply: params.apply,
+    dirs: params.dirs,
+    chatSafe: name === "plan",
+  };
   const out = [];
   const origLog = console.log;
   console.log = (...a) => out.push(a.map(String).join(" "));
@@ -90,8 +131,10 @@ function runTool(name, params = {}) {
       case "route": code = cmdRoute(ctx); break;
       case "sets": code = cmdSets(ctx); break;
       case "plan": code = cmdPlan(ctx); break;
+      case "compose": code = cmdCompose({ ...ctx, json: true }); break;
       case "refs": code = cmdRefs(ctx); break;
       case "wikis": code = cmdWikis(ctx); break;
+      case "graph": code = cmdGraph({ ...ctx, ecosystem: true, json: params.format === "json", dot: params.format === "dot", mmd: params.format === "mmd" }); break;
       case "list_installs": code = runList(); break;
       default: throw new Error(`unknown tool: ${name}`);
     }

@@ -1,175 +1,168 @@
 # parasite-skill
 
-Route any request to the right agent skills. Scans the skill ecosystem, validates skills against the Agent Skills spec, routes ideas to skills and skill-sets, and installs itself into any AI client via copy or symlink.
+`parasite-skill` is a local CLI and Agent Skill that routes a request through the skills already installed on a machine. It scans skill metadata, ranks relevant skills and sets, selects supporting assets on demand, and emits a bounded execution payload for an AI client.
 
-Extends this with a runtime injection system: enhancements are applied without modifying the client's source files.
-
-## What it does
-
-- Scans skill directories (user, Claude Code, project) and builds a registry
-- Validates each skill against the official spec: name equals directory name, description 1-1024 chars, name format
-- Scores an idea against every skill using IDF-weighted keyword scoring
-- Groups skills into named sets (thinking, research, planning, build, docs, review, frontend, ops, intelligence)
-- Generates ref pages, a wiki, and a relatedness graph
-- Installs the skill into AI clients: Claude Code, Codex, OpenCode, Cline, Cursor, Windsurf, Gemini CLI, Warp, GitHub Copilot, Continue, Zed, and `~/.agents/skills`
-- Injects runtime enhancements into clients without touching their source
+It also provides opt-in adapters for supported client configuration files, MCP registration, generated build hooks, and server wrappers. It does not bypass permissions or inject code into arbitrary closed-source applications.
 
 ## Install
 
 ```bash
-# npm
 npm install -g parasite-skill
-
-# bun
-bun add -g parasite-skill
-
-# run without installing
+# or
 npx parasite-skill --help
 ```
 
-Install the skill into clients:
+Install the skill payload into detected clients:
 
 ```bash
-parasite-skill install                # interactive: pick clients
-parasite-skill install --yes          # auto: every detected client
-parasite-skill install --yes --link   # symlink/junction instead of copy
-parasite-skill install -a claude-code,codex,opencode
-parasite-skill install --project      # install into ./<client>/skills
-parasite-skill list                   # show installed instances
-parasite-skill remove --yes           # uninstall from detected clients
-parasite-skill refresh                # update all installed copies
+parasite-skill install                 # choose detected clients
+parasite-skill install --yes           # install into every known target
+parasite-skill install --agent claude-code,codex --link
+parasite-skill refresh
+parasite-skill list
 ```
 
-The installer detects which clients you have, dedupes shared directories, and verifies SKILL.md exists after every install. Symlinks fall back to Windows junctions automatically.
+The installer supports copy and link modes, verifies `SKILL.md`, deduplicates shared destinations, and uses Windows junctions when symlinks are unavailable.
 
-## Routing
+## Route without dumping the ecosystem
 
 ```bash
-parasite-skill scan                                # rebuild the registry
-parasite-skill validate                            # spec-check all skills, exit 1 on issues
-parasite-skill route "write api docs for a rest endpoint"
-parasite-skill route "create a new skill" --set build   # route within one set
-parasite-skill plan "build a todo app with auth"
-parasite-skill sets --apply thinking               # load order for a set
-parasite-skill refs                                # generate ref pages
-parasite-skill wikis                               # wiki + graph.dot + graph.mmd
-parasite-skill trace session.log                   # which skills a session used
-parasite-skill graph --dot                         # relatedness graph
+parasite-skill scan
+parasite-skill validate
+parasite-skill route "write secure API documentation"
+parasite-skill plan "add authentication to the service"
+parasite-skill compose "debug the failing MCP request" --json
 ```
 
-Scoring is deterministic: tokenized, stemmed, IDF-weighted. It returns a ranked hypothesis. The SKILL.md instructs agents to re-verify and apply judgment.
+`compose` is the runtime boundary. It returns selected skills, rationale, relevant asset metadata, small safe excerpts, execution order, and verification cadence. Full skill documents, scripts, hooks, and templates remain on demand instead of being pasted into the chat.
 
-`route --set <name>` restricts scoring to one set. Custom sets from `sets --new` work too.
+Routing is deterministic and inspectable: token and body-keyword matches, request mode, tags, explicit skill names, project set filters, and exclusions contribute to the result. The model still makes the semantic decision; scores are candidates, not proof.
 
-## Project config
+Project defaults live in `parasite-skill.json` or `.parasite-skill.json` and can define registry/scan paths, sets, enabled sets, exclusions, output limits, client allowlists, isolated environment keys, and the parasite toggle. `PARASITE_SKILL_HOME` isolates the complete runtime for tests or sandboxes.
 
-A `parasite-skill.json` (or `.parasite-skill.json`) in the project root sets defaults. The CLI walks up from the working directory to find it.
+## Typed ecosystem graph
 
-```json
-{
-  "registry": "./.parasite-skill",
-  "dirs": ["./skills", "./.agents/skills"],
-  "defaultSet": "build",
-  "force": false
-}
-```
-
-CLI flags override config values.
-
-## Parasite extension system
-
-`parasite-skill parasite` manages runtime injections.
+Generate a names-and-relationships-only inventory and graph:
 
 ```bash
-parasite-skill parasite --status                      # injection status per client
-parasite-skill parasite --add --agent claude-code --type hook --code "console.log('x')"
-parasite-skill parasite --toggle injection-1723 --enable
-parasite-skill parasite --remove injection-1723
+parasite-skill export
+parasite-skill wikis
+parasite-skill graph --ecosystem --json
+parasite-skill graph --ecosystem --dot
+parasite-skill graph --ecosystem --mmd
+parasite-skill graph --ecosystem --json --public   # safe for public Pages/artifacts
 ```
 
-Injections are stored in a `.parasite-skill-extensions/` folder per client, tracked in a `parasite-manifest.json`. Original files are never modified. Each injection can be toggled or removed.
+The typed graph models:
 
-Injection types: `pre-init` (before client init), `post-init` (after init), `middleware` (HTTP middleware), `hook` (wrap existing functions).
+- skills and their asset groups (`references`, `templates`, `scripts`, `hooks`, `tools`, and similar directories);
+- built-in, custom, and project skill-sets;
+- detected client destinations and installed copies;
+- parasite extension directories and injection counts;
+- MCP registration targets;
+- known global/per-client rule paths;
+- declarative agent profiles and the tools they may call.
 
-### Build hooks
+`graph --dot` and `graph --mmd` are suitable for Graphviz and Mermaid. The legacy skill vocabulary graph remains available with `parasite-skill graph --dot` without `--ecosystem`. The `ix` skill can map this repository for symbol-level callers, callees, impact, and smells; the generated ecosystem graph is the portable package-level view and does not vendor Ix.
+
+`export` and private `wikis` inventories never publish file contents, secrets, environment values, or chat history. Use `--public` for graph/wiki artifacts intended for Pages: it removes filesystem paths and sanitizes generated descriptions while keeping only public metadata.
+
+## Declarative agent profiles and sets
+
+The repository includes focused profiles for:
+
+- `ecosystem-architect`
+- `release-engineer`
+- `security-auditor`
+- `mcp-integrator`
+- `frontend-verifier`
+- `history-recovery`
+
+They are routing recipes, not hidden autonomous processes. Each profile lists skills, sets, asset groups, MCP tools, clients, and guardrails. Matching role sets are available as `agent-ecosystem`, `agent-release`, `agent-security`, `agent-mcp`, `agent-frontend`, and `agent-history`.
+
+Create project-specific sets without editing the package:
 
 ```bash
+parasite-skill sets --new my-release --members "git-workflow-and-versioning,verification-before-completion" --desc "release checks"
+parasite-skill sets --add my-release:shipping-and-launch
+parasite-skill sets --apply my-release
+```
+
+## Adapters and parasite extensions
+
+The adapter boundary is explicit:
+
+```bash
+parasite-skill mcp add --clients claude-code,cursor
+parasite-skill mcp list
+parasite-skill mcp remove
+
+parasite-skill parasite --status
+parasite-skill parasite --add --agent claude-code --type hook --code "console.log('active')"
+parasite-skill parasite --toggle injection-id --enable
+parasite-skill parasite --remove injection-id
 parasite-skill parasite --hook vite --out vite-plugin.js
-parasite-skill parasite --hook webpack --out webpack-plugin.js
-```
-
-Generates a plugin that injects pre-init code into the HTML build.
-
-### Server wrapping
-
-```bash
 parasite-skill parasite --wrap --server ./upstream-server.js --out wrapped-server.js
 ```
 
-Generates a module that imports the upstream server, applies enhancement layers (middleware, routes, hooks), and re-exports.
+Supported paths are configured explicitly and existing JSON files are backed up before writes. Generated build hooks and server wrappers leave upstream source files unchanged.
 
-### Traceability protection
+No local adapter can universally inject into arbitrary closed-source clients, rewrite a remote MCP server, bypass a client sandbox, or silently modify global rules. Such a client needs an approved plugin/configuration surface, an explicit wrapper, or a separately implemented adapter. `--status` reports actual local state; it does not imply capabilities that are not present.
 
-```bash
-parasite-skill parasite --protect --file input.js --level medium --out protected.js
-```
+## LLM and history boundaries
 
-Levels: `light` (strip comments, minify), `medium` (rename variables, add dead code), `heavy` (obfuscate with control flow).
-
-## Skill-sets
-
-| Set | Members |
-|---|---|
-| thinking | tractatus-thinking, sequential-thinking, doubt-driven-development, debug-thinking |
-| research | deepwiki, context7, find-docs, web-reader, source-driven-development |
-| planning | brainstorming, spec-driven-development, writing-plans, planning-and-task-breakdown |
-| build | incremental-implementation, api-and-interface-design, system-connector, tdd |
-| docs | documentation-writer, readme-skill, stop-slop, documentation-and-adrs |
-| review | code-review-and-quality, verification-before-completion, code-simplification |
-| frontend | frontend-ui-engineering, frontend-design, browser-testing-with-devtools |
-| ops | ci-cd-and-automation, shipping-and-launch, observability-and-instrumentation |
-| intelligence | ix, understand, code-review-graph, knip |
-| all | every registered skill |
-
-Custom sets:
+Direct model calls are opt-in and provider-neutral:
 
 ```bash
-parasite-skill sets --new my-set --members "brainstorming,tdd" --desc "my workflow"
-parasite-skill sets --add my-set:code-review-and-quality
-parasite-skill sets --remove my-set:code-review-and-quality
-parasite-skill sets --delete my-set
+PARASITE_SKILL_LLM_URL=http://localhost:11434/v1 \
+PARASITE_SKILL_LLM_MODEL=local-model \
+parasite-skill llm "review this routing plan"
 ```
 
-Custom sets persist to `sets.custom.json` in the registry and show a `*` marker in listings.
+Local endpoints are allowed by default. External HTTPS endpoints require `--allow-remote`; redirects are disabled and response/output sizes are bounded. Prefer `PARASITE_SKILL_LLM_API_KEY` over command-line keys.
 
-## MCP
+Freebuff history recovery is explicit:
 
 ```bash
-parasite-skill mcp add       # register the MCP server in client configs
-parasite-skill mcp remove
-parasite-skill mcp list
+parasite-skill history discover
+parasite-skill history import --file ./exported-transcript.json
 ```
 
-The server ships in JS (`src/mcp-server.js`) and Python (`scripts/mcp_server.py`) with the same protocol and tools.
+The command does not scrape chat history automatically. It reads only a selected file, bounds the read, redacts common secrets, paths, and email addresses, and never modifies the original.
 
-## Sync
+## GitHub Pages distribution
 
-```bash
-parasite-skill sync --init <repo-url>
-parasite-skill sync --push
-parasite-skill sync --pull
-```
+The `GitHub Pages` workflow publishes on `main`:
 
-Backs up the whole skills tree to a git remote. The `template/` dir is a ready-made sync repo.
+- the generated wiki and agent profile pages;
+- `ecosystem-graph.json`;
+- `install.json`;
+- the zero-npm skill bundle;
+- a small landing page.
+
+The workflow uses a temporary isolated registry and does not publish user data. It requires Pages to be enabled with the GitHub Actions source in repository settings.
 
 ## Development
 
 ```bash
-bun test          # engine unit tests
-bun run scan      # refresh registry.json
+npm test -- --runInBand
+npm run check
+npm run pack:smoke
+npm pack --dry-run --json
 ```
 
-`PARASITE_SKILL_HOME=/tmp/sandbox parasite-skill <cmd>` redirects the registry, installs, and MCP for isolated runs.
+The package has no runtime dependency. The smoke test exercises the actual packed tarball. CI also rejects cache/test files in the npm artifact and rejects `Co-authored-by:` trailers across the checked commit range.
+
+For repository structure and impact analysis, use the installed Ix skill when available:
+
+```bash
+ix map --silent
+ix status
+ix stats
+ix impact cmdGraph --format llm
+```
+
+Ix is an optional local dependency graph, backed by the installed Ix service. It is not bundled into this package and is not required for routing or Pages.
 
 ## License
 

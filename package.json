@@ -1,13 +1,12 @@
 {
   "name": "parasite-skill",
-  "version": "1.0.0",
-  "description": "Parasite skill system: enhances any AI client without modifying source code. Routes requests to the right agent skills, validates against the Agent Skills spec, and provides runtime injection, build-time hooks, and server wrapping capabilities.",
+  "version": "1.1.0",
+  "description": "Local skill routing, bounded ecosystem graphing, and explicit client/MCP adapters for AI development tools.",
   "type": "module",
   "license": "MIT",
   "keywords": [
     "agent-skills",
     "skills",
-    "parasite-skill",
     "parasite-skill",
     "claude-code",
     "codex",
@@ -22,11 +21,17 @@
     "parasite-skill": "bin/parasite-skill.js"
   },
   "files": [
-    "bin",
-    "src",
-    "skill",
-    "scripts",
-    "docs",
+    "bin/**/*.js",
+    "src/**/*.js",
+    "skill/SKILL.md",
+    "skill/references/**/*.md",
+    "skill/templates/**/*.md",
+    "skill/scripts/*.py",
+    "skill/scripts/*.rs",
+    "scripts/*.py",
+    "scripts/*.sh",
+    "scripts/pack-smoke.mjs",
+    "docs/**/*.md",
     "README.md",
     "LICENSE"
   ],
@@ -34,7 +39,10 @@
     "start": "bun bin/parasite-skill.js",
     "install:skill": "bun bin/parasite-skill.js install --yes",
     "scan": "bun bin/parasite-skill.js scan",
-    "test": "bun test tests/"
+    "test": "bun test tests/",
+    "check": "node --check bin/parasite-skill.js && node --check src/engine.js && node --check src/mcp-server.js && python -m py_compile scripts/conductor.py scripts/mcp_server.py skill/scripts/conductor.py skill/scripts/mcp_server.py",
+    "pack:check": "npm pack --dry-run --json",
+    "pack:smoke": "node scripts/pack-smoke.mjs"
   },
   "engines": {
     "node": ">=18",
@@ -42,5 +50,19 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "main": "src/index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Alot1z/parasite-skill.git"
+  },
+  "author": "skill-router",
+  "bugs": {
+    "url": "https://github.com/Alot1z/parasite-skill/issues"
+  },
+  "homepage": "https://github.com/Alot1z/parasite-skill#readme"
 }

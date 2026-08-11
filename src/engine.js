@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { LANG_EXT, TAG_RULES } from "./data/tags.js";
 import { SETS as SETS_DATA } from "./data/sets.js";
 
@@ -57,7 +57,7 @@ export function loadSetsWithProject(reg, projectSets) {
   return sets;
 }
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 export const REGISTRY_NAME = ".parasite-skill";
 export const HOME = homedir();
 
@@ -185,6 +185,10 @@ export function inferTags(name, description) {
 // scripts dir holds no source files (Rust Cargo.toml, Go go.mod, ...).
 // Keys are lowercase; lookups normalize the file name before matching,
 // mirroring the LANG_EXT convention in src/data/tags.js.
+const ASSET_DIRS = ["references", "templates", "scripts", "assets", "hooks", "prompts", "tools", "examples", "docs"];
+const SAFE_EXCERPT_EXTENSIONS = new Set([".md", ".mdx", ".txt"]);
+const SENSITIVE_ASSET_NAME = /(^|[._-])(env|secret|credential|password|token|private[-_]?key)([._-]|$)/i;
+
 const MANIFEST_LANG = {
   "cargo.toml": "rust",
   "cargo.lock": "rust",
@@ -217,16 +221,17 @@ export function scanSkillDir(skillPath) {
   const name = meta.name ?? skillPath.split(/[\\/]/).pop() ?? "?";
   const description = meta.description ?? "";
   const subdirs = {};
-  for (const d of ["scripts", "references", "assets"]) {
+  for (const d of ASSET_DIRS) {
     const p = join(skillPath, d);
     if (existsSync(p)) {
       try {
-        subdirs[d] = readdirSync(p);
+        subdirs[d] = readdirSync(p).filter((name) => !name.startsWith("."));
       } catch {
         subdirs[d] = [];
       }
     }
   }
+  const assets = scanSkillAssets(skillPath);
   const languages = [];
   const walk = (dir) => {
     if (!existsSync(dir)) return;
@@ -272,12 +277,242 @@ export function scanSkillDir(skillPath) {
     path: skillPath.replace(/\\/g, "/"),
     description,
     dirs: subdirs,
+    assets,
     languages: languages.sort(),
     tags: inferTags(name, description),
     keywords,
     bodyKeywords,
     spec_ok: issues.length === 0,
     issues,
+  };
+}
+
+export function scanSkillAssets(skillPath, maxFiles = 240) {
+  const assets = [];
+  const walk = (root, dir) => {
+    if (assets.length >= maxFiles || !existsSync(dir)) return;
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (assets.length >= maxFiles || entry.name.startsWith(".")) continue;
+      const full = join(dir, entry.name);
+      if (SENSITIVE_ASSET_NAME.test(entry.name)) continue;
+      if (entry.isDirectory()) {
+        walk(root, full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      let bytes = 0;
+      try { bytes = statSync(full).size; } catch { /* ignore unreadable files */ }
+      const ext = full.slice(full.lastIndexOf(".")).toLowerCase();
+      const rel = relative(skillPath, full).replace(/\\/g, "/");
+      const top = rel.split("/")[0];
+      assets.push({
+        path: rel,
+        group: ASSET_DIRS.includes(top) ? top : "other",
+        bytes,
+        language: LANG_EXT[ext] ?? null,
+        excerptable: SAFE_EXCERPT_EXTENSIONS.has(ext) && bytes <= 200_000,
+      });
+    }
+  };
+  for (const dirName of ASSET_DIRS) walk(skillPath, join(skillPath, dirName));
+  return assets.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function sanitizeChatText(text) {
+  let redacted = String(text);
+  const replace = (pattern, replacement) => {
+    redacted = redacted.replace(new RegExp(pattern, "gi"), replacement);
+  };
+  replace(String.raw`(authorization|bearer|token|secret|password|api[_-]?key)(\s*[=:]\s*)(\S+)`, "$1$2<redacted>");
+  replace(String.raw`-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----`, "<private-key-redacted>");
+  replace(String.raw`[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`, "<email-redacted>");
+  const unixPrefixes = ["/Users/", "/home/", "/tmp/", "/workspace/", "/private/", "/mnt/", "/opt/", "/var/", "/etc/"];
+  return redacted.split(" ").map((part) => {
+    const normalized = part.replaceAll("\\", "/");
+    const drive = normalized.charCodeAt(0);
+    const windowsAbsolute = normalized.length >= 3 && drive >= 65 && drive <= 90 && normalized[1] === ":" && normalized[2] === "/";
+    const unixAbsolute = unixPrefixes.some((prefix) => normalized.startsWith(prefix));
+    return windowsAbsolute || unixAbsolute ? "<path-redacted>" : part;
+  }).join(" ");
+}
+
+function markdownSections(text) {
+  const body = text.replace(/^---[ \\t]*\\r?\\n[\\s\\S]*?^---[ \\t]*\\r?\\n/m, "");
+  const matches = [...body.matchAll(/(?=^#{1,6}\\s+)/gm)];
+  if (!matches.length) return [{ heading: "content", text: body.trim() }];
+  return matches.map((match, index) => {
+    const start = match.index ?? 0;
+    const end = matches[index + 1]?.index ?? body.length;
+    const chunk = body.slice(start, end).trim();
+    const heading = chunk.match(/^#{1,6}\\s+(.+)$/)?.[1]?.trim() ?? "content";
+    return { heading, text: chunk };
+  }).filter((section) => section.text);
+}
+
+function excerptForAsset(skillPath, asset, requestTokens, maxChars) {
+  if (!asset.excerptable) return null;
+  try {
+    const text = readFileSync(join(skillPath, asset.path), "utf-8");
+    const sections = asset.path.toLowerCase().endsWith(".md") || asset.path.toLowerCase().endsWith(".mdx")
+      ? markdownSections(text)
+      : [{ heading: "content", text }];
+    const scored = sections.map((section) => {
+      const tokens = new Set(tokenize(`${section.heading} ${section.text}`));
+      const score = requestTokens.reduce((n, token) => n + (tokens.has(token) ? 1 : 0), 0);
+      return { ...section, score };
+    }).sort((a, b) => b.score - a.score || a.text.length - b.text.length);
+    const selected = scored.slice(0, 2).map((section) => section.text).join("\\n\\n");
+    return sanitizeChatText(selected.slice(0, maxChars));
+  } catch {
+    return null;
+  }
+}
+
+const REQUEST_MODE_RULES = {
+  analysis: ["analy", "understand", "explain", "inspect", "trace", "map"],
+  implementation: ["implement", "build", "create", "add", "change", "modify", "feature"],
+  debugging: ["debug", "fix", "broken", "error", "fail", "issue", "bug"],
+  research: ["research", "verify", "official", "documentation", "compare", "investigate"],
+  writing: ["write", "document", "readme", "guide", "report", "prose"],
+  testing: ["test", "verify", "regression", "coverage", "qa"],
+  shipping: ["deploy", "release", "launch", "ci", "pipeline", "publish"],
+};
+
+export function classifyRequest(idea) {
+  const lower = String(idea ?? "").toLowerCase();
+  const modes = Object.entries(REQUEST_MODE_RULES)
+    .filter(([, words]) => words.some((word) => lower.includes(word)))
+    .map(([mode]) => mode);
+  const explicitSkills = [];
+  for (const name of arguments.length > 1 && arguments[1]?.skills ? arguments[1].skills : []) {
+    if (lower.includes(name.toLowerCase())) explicitSkills.push(name);
+  }
+  return {
+    modes: modes.length ? modes : ["general"],
+    tags: inferTags("request", idea),
+    explicitSkills,
+  };
+}
+
+export function composePayload(payload, idea, options = {}) {
+  const sets = options.sets ?? SETS;
+  const allSkills = payload.skills ?? [];
+  const classification = classifyRequest(idea, { skills: allSkills.map((skill) => skill.name).sort() });
+  const base = scoreIdea(payload, idea, sets);
+  const requestTokens = tokenize(idea);
+  const excluded = new Set(Array.isArray(options.excludeSkills) ? options.excludeSkills : []);
+  const hasEnabledSetFilter = Array.isArray(options.enabledSets) && options.enabledSets.length > 0;
+  const allowed = new Set();
+  if (hasEnabledSetFilter) {
+    for (const setName of options.enabledSets) for (const member of sets[setName]?.members ?? []) allowed.add(member);
+  }
+  const ranked = allSkills.map((skill) => {
+    const original = base.scored.find(([name]) => name === skill.name)?.[1] ?? 0;
+    const matched = requestTokens.filter((token) => (skill.keywords ?? []).includes(token) || (skill.bodyKeywords ?? []).includes(token));
+    const explicit = classification.explicitSkills.includes(skill.name);
+    const tagOverlap = classification.tags.filter((tag) => (skill.tags ?? []).includes(tag));
+    const modeBoost = classification.modes.includes("general") ? 0 : tagOverlap.length * 0.75;
+    return {
+      skill,
+      score: Math.round((original + modeBoost + (explicit ? 1000 : 0)) * 100) / 100,
+      matched: [...new Set(matched)].slice(0, 8),
+      tagOverlap,
+      explicit,
+    };
+  }).filter((entry) => !excluded.has(entry.skill.name) && (!hasEnabledSetFilter || allowed.has(entry.skill.name)) && entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name));
+
+  const top = Math.max(1, Math.min(Number(options.top) || 6, 12));
+  const selected = ranked.slice(0, top);
+  const permittedSetNames = Array.isArray(options.enabledSets) && options.enabledSets.length
+    ? options.enabledSets.filter((name) => sets[name])
+    : Object.keys(sets);
+  const memberSet = base.setScores.find(([name]) => permittedSetNames.includes(name) && selected.some((entry) => sets[name]?.members?.includes(entry.skill.name)))?.[0]
+    ?? permittedSetNames.find((name) => sets[name]?.members?.some((member) => selected.some((entry) => entry.skill.name === member)));
+  const modeSet = classification.modes.map((mode) => ({ analysis: "intelligence", implementation: "build", debugging: "review", research: "research", writing: "docs", testing: "review", shipping: "ops" }[mode])).find((name) => name && permittedSetNames.includes(name));
+  const tagSet = classification.tags.find((tag) => permittedSetNames.includes(tag)) || (classification.tags.includes("api") && permittedSetNames.includes("build") ? "build" : null);
+  const bestSet = memberSet ?? modeSet ?? tagSet ?? permittedSetNames[0] ?? (Array.isArray(options.enabledSets) && options.enabledSets.length ? "none" : "thinking");
+  const requestedBudget = Number(options.maxChars);
+  const excerptBudget = Number.isFinite(requestedBudget) ? Math.max(0, Math.min(requestedBudget, 20000)) : 9000;
+  let usedChars = 0;
+  const selectedSkills = selected.map((entry) => {
+    const skill = entry.skill;
+    const assets = (skill.assets?.length ? skill.assets : scanSkillAssets(skill.path)).map((asset) => ({ ...asset }));
+    const assetRank = assets.map((asset) => ({
+      asset,
+      score: requestTokens.reduce((n, token) => n + (tokenize(asset.path).includes(token) ? 1 : 0), 0) + (asset.excerptable ? 0.25 : 0),
+    })).sort((a, b) => b.score - a.score || a.asset.path.localeCompare(b.asset.path));
+    const chosenAssets = assetRank.slice(0, 6).map(({ asset }) => ({
+      path: sanitizeChatText(asset.path),
+      group: asset.group,
+      language: asset.language,
+      bytes: asset.bytes,
+      load: asset.excerptable ? "selected excerpt below or load on demand" : "load on demand",
+    }));
+    const excerpts = [];
+    for (const { asset } of assetRank) {
+      if (usedChars >= excerptBudget || excerpts.length >= 3) break;
+      const remaining = Math.min(1600, excerptBudget - usedChars);
+      const text = excerptForAsset(skill.path, asset, requestTokens, remaining);
+      if (!text) continue;
+      excerpts.push({ path: sanitizeChatText(asset.path), text });
+      usedChars += text.length;
+    }
+    return {
+      name: skill.name,
+      description: sanitizeChatText(skill.description),
+      score: entry.score,
+      why: {
+        matched: entry.matched,
+        tags: entry.tagOverlap,
+        explicit: entry.explicit,
+      },
+      languages: skill.languages ?? [],
+      capabilities: skill.tags ?? [],
+      assets: chosenAssets,
+      excerpts,
+    };
+  });
+
+  return {
+    kind: "parasite-skill-runtime-payload",
+    version: VERSION,
+    request: sanitizeChatText(String(idea)),
+    decision: {
+      modes: classification.modes,
+      tags: classification.tags,
+      explicitSkills: classification.explicitSkills,
+      selectedSkillSet: bestSet,
+      selectedCount: selectedSkills.length,
+      rationale: "Deterministic routing narrowed the ecosystem; semantic mode/tag and explicit-skill signals adjusted the final selection.",
+    },
+    selectedSkills,
+    execution: {
+      order: selectedSkills.map((skill) => skill.name),
+      tools: selectedSkills.flatMap((skill) => skill.assets.filter((asset) => ["scripts", "hooks", "tools"].includes(asset.group)).map((asset) => ({ skill: skill.name, ...asset }))),
+      cadence: {
+        start: ["tractatus-thinking", "sequential-thinking", "deepwiki-or-context7"],
+        between: ["doubt-driven-development", "debug-thinking-on-failure", "context-engineering-on-drift", "stop-slop-before-prose"],
+        after: ["verification-before-completion", "code-review-and-quality"],
+      },
+    },
+    loading: {
+      fullSkillDocuments: "on-demand",
+      fullAssetContents: "on-demand",
+      excerptChars: usedChars,
+      maxExcerptChars: excerptBudget,
+      excludedFromChat: ["absolute filesystem paths", "environment values", "credentials", "unselected skill documents", "unselected asset contents"],
+    },
+    privacy: {
+      sourceBoundary: "skill assets only; user-owned asset text is untrusted and excerpted conservatively",
+      sanitization: "best-effort redaction of common absolute paths, environment assignments, emails, and credential patterns; untrusted content remains on-demand",
+    },
   };
 }
 

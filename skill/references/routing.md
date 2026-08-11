@@ -18,6 +18,19 @@ Each skill is auto-tagged by keyword rules over name + description: `security`, 
 
 Per the official spec: project-level skills (`.agents/skills/`, `.claude/skills/` in cwd) override user-level skills (`~/.agents/skills/`, `~/.claude/skills/`) with the same name. The registry stores the winning entry per name. Scan order is deterministic and later dirs win: `~/.claude/skills` > `~/.agents/skills` (user scope), then project `.claude/skills` > project `.agents/skills`.
 
+## Adaptive Composition
+
+`route` is the compatibility/debugging view. For execution, use `compose` so the runtime selects a small grounded payload instead of injecting every installed skill document:
+
+```bash
+parasite-skill compose "implement a secure API" --json
+parasite-skill plan "implement a secure API"
+```
+
+The composer combines deterministic scores with explicit skill-name matches, request modes, tag overlap, project allowlists/blacklists, and asset relevance. It returns selected skills, a best skill-set, bounded excerpts, and manifests for references, templates, scripts, hooks, tools, examples, and docs. Full contents remain local and load on demand. It excludes absolute paths, environment values, credentials, unselected documents, and unselected asset contents.
+
+The composer is a selector and payload builder, not an LLM. An AI host or MCP client uses the grounded payload to make the semantic decision and execute the selected procedures. Without an LLM host, deterministic routing remains the safe fallback.
+
 ## Manual Overrides
 
 The scorer is intentionally naive. Known overrides applied by the AI layer:
