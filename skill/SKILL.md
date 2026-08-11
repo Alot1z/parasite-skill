@@ -56,12 +56,14 @@ parasite-skill link [--unlink]
 parasite-skill mcp add|remove|list
 parasite-skill tools list|describe|run <name> [--args STR] [--timeout-ms N]
 parasite-skill tools run-batch a,b,c [--args STR] [--continue]
+parasite-skill tools run <name> --json-args '{"port": 8080}'  # schema-validated
 parasite-skill tools dry-run <name> [--args STR]   # preview, never execute
 parasite-skill tools audit [--threshold high]      # static risk scan
 parasite-skill tools docs                         # generate registry/TOOLS.md
+parasite-skill tools policy --allow "a__*" --deny "b__*" [--dry-run]
 parasite-skill tools history [--clear]             # execution audit ledger
 parasite-skill agents list|show <profile>          # inspect profiles, no run
-parasite-skill agents run <profile> "<request>" [--max-tools N]
+parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run]
 parasite-skill agents run --all "<request>"        # every profile once
 parasite-skill plan "<request>" --auto   # auto-max: pin the always-on cadence
 ```
@@ -74,9 +76,14 @@ Tools execute only on explicit invocation — never from routing or composing
 alone. The `parasite-skill.json` `tools` block (`allow`/`deny`/`env`,
 `timeoutMs`, `scoped` per `profile:<name>` / `sets:<set>`) gates which tools
 run and which environment keys reach them; skills may declare per-tool
-`description`/`argsSchema` via a `tools:` JSON block in their frontmatter;
-`llm` exposes tools as native functions and executes model tool calls in a
-bounded loop.
+`description`/`argsSchema` via a `tools:` JSON block in their frontmatter,
+and `--json-args` validates structured arguments against that schema before
+execution (exit 3 on invalid). `tools policy` edits the gate from the CLI.
+`agents run --dry-run` previews every command a profile would run without
+executing; `trace <file|dir>` aggregates skill mentions plus ledger tool runs
+(`--json` for the AI layer). `llm` exposes tools as native functions,
+presents declared schemas to the model, and executes tool calls in a bounded
+loop.
 
 ## Always-on cadence
 

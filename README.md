@@ -118,7 +118,24 @@ array is the only environment exposed to tool processes (PATH is always kept).
 `--env-filter a,b` overrides it per invocation, and `--timeout-ms N` overrides
 `timeoutMs`. `scoped` merges extra rules per agent profile (`profile:<name>`)
 or skill-set (`sets:<name>`) when `agents run` resolves each profile's policy.
-`trace <file>` also reports tool runs from the ledger alongside skill mentions.
+`trace <file|dir>` also reports tool runs from the ledger alongside skill
+mentions, and can aggregate a whole directory of transcripts (`--json` for
+machine-readable output).
+
+Edit the policy from the CLI instead of by hand (`--dry-run` previews):
+
+```bash
+parasite-skill tools policy                          # print effective policy
+parasite-skill tools policy --allow "a__*" --deny "b__*" --env PATH --policy-timeout-ms 60000
+parasite-skill tools policy --scoped profile:security-auditor --scoped-deny "*__deploy*"
+parasite-skill tools policy --drop-policy
+```
+
+Per-invocation knobs: `tools run <name> --json-args '{"port":8080}'` validates
+structured args against the tool's declared `argsSchema` (exit 3 on invalid),
+and `--tool-env KEY=VALUE,...` injects inline env overrides for that run.
+`export` records the active tools policy (names/keys only) in `ecosystem.json`
+so the AI layer knows the execution gate without rescanning.
 
 ## Auto-max routing
 
@@ -150,7 +167,11 @@ across profiles and a combined report is written to `agents/all-<request>.md`
 ```bash
 parasite-skill agents list          # inventory all profiles
 parasite-skill agents show security-auditor   # print one profile's recipe
+parasite-skill agents run security-auditor "audit the LLM boundary" --dry-run
 ```
+
+`--dry-run` resolves and policy-checks every tool a profile would run and
+prints the exact commands — nothing executes and the ledger stays untouched.
 
 ## Typed ecosystem graph
 

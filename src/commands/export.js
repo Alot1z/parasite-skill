@@ -116,6 +116,16 @@ export function cmdExport(args) {
                 : null,
         envKeys: project.env && typeof project.env === "object" ? Object.keys(project.env) : [],
         clients: Array.isArray(project.clients) ? project.clients : [],
+        tools:
+          project.tools && typeof project.tools === "object" && !Array.isArray(project.tools)
+            ? {
+                allow: Array.isArray(project.tools.allow) ? project.tools.allow : [],
+                deny: Array.isArray(project.tools.deny) ? project.tools.deny : [],
+                envKeys: Array.isArray(project.tools.env) ? project.tools.env : [],
+                timeoutMs: typeof project.tools.timeoutMs === "number" ? project.tools.timeoutMs : null,
+                scopedKeys: project.tools.scoped && typeof project.tools.scoped === "object" ? Object.keys(project.tools.scoped) : [],
+              }
+            : null,
       }
     : null;
 
@@ -229,6 +239,14 @@ export function cmdExport(args) {
     }
     if (projectInfo.envKeys.length) md.push(`  - env: ${projectInfo.envKeys.join(", ")} (key names only)`);
     if (projectInfo.clients.length) md.push(`  - clients: ${projectInfo.clients.join(", ")}`);
+    if (projectInfo.tools) {
+      const t = projectInfo.tools;
+      const parts = [`allow ${t.allow.join(",") || "none"}`, `deny ${t.deny.join(",") || "none"}`];
+      if (t.envKeys.length) parts.push(`env ${t.envKeys.join(",")}`);
+      if (t.timeoutMs) parts.push(`timeoutMs ${t.timeoutMs}`);
+      if (t.scopedKeys.length) parts.push(`scoped ${t.scopedKeys.join(",")}`);
+      md.push(`  - tools: ${parts.join(" · ")}`);
+    }
     md.push("");
   }
   if (!globalRules.length && !perClientRules.length && !projectInfo) md.push("None found.", "");

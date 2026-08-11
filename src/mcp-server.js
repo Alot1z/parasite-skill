@@ -3,7 +3,7 @@
 // Run:  bun src/mcp-server.js   (or:  node src/mcp-server.js)
 import { createInterface } from "node:readline";
 import { VERSION, loadRegistry, registryDir } from "./engine.js";
-import { auditSkillTools, filterToolsByPolicy, listSkillTools, runSkillTool } from "./ai-tools.js";
+import { auditSkillTools, filterToolsByPolicy, listSkillTools, renderToolsDocs, runSkillTool } from "./ai-tools.js";
 import {
   cmdPlan,
   cmdCompose,
@@ -121,6 +121,18 @@ const TOOLS = [
     },
   },
   {
+    name: "skill_tools_docs",
+    description: "Return the TOOLS.md reference of the callable skill AI-tool surface (same content as `tools docs`).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dirs: { type: "string", description: "extra scan dirs, comma-separated" },
+        allow: { type: "array", items: { type: "string" } },
+        deny: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
     name: "skill_tools_run",
     description: "Explicitly execute one skill AI-tool. Bounded, captured, and redacted; never runs automatically.",
     inputSchema: {
@@ -128,6 +140,7 @@ const TOOLS = [
       properties: {
         name: { type: "string" },
         args: { type: "string", description: "space-separated arguments" },
+        json_args: { type: "object", description: "structured args validated against the tool's declared argsSchema" },
         timeout_ms: { type: "number" },
         dirs: { type: "string" },
         allow: { type: "array", items: { type: "string" }, description: "tool-name glob allowlist" },
@@ -192,6 +205,11 @@ function runTool(name, params = {}) {
         console.log(JSON.stringify({ threshold, tools: audits, flagged: audits.filter((entry) => levels.indexOf(entry.risk) >= minIndex).length }, null, 2));
         break;
       }
+      case "skill_tools_docs": {
+        const payload = loadRegistry(registryDir(ctx.registry), ctx.dirs, ctx.force);
+        console.log(renderToolsDocs(payload, { allow: params.allow, deny: params.deny }));
+        break;
+      }
       case "skill_tools_run": {
         const payload = loadRegistry(registryDir(ctx.registry), ctx.dirs, ctx.force);
         try {
@@ -199,6 +217,7 @@ function runTool(name, params = {}) {
             timeoutMs: params.timeout_ms,
             policy: { allow: params.allow, deny: params.deny, env: params.env },
             registry: registryDir(ctx.registry),
+            ...(params.json_args !== undefined ? { jsonArgs: params.json_args } : {}),
           });
           console.log(JSON.stringify(result, null, 2));
         } catch (err) {

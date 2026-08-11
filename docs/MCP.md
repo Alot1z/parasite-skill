@@ -60,7 +60,8 @@ dependencies and does not require model credentials.
 | `list_installs` | — | installed client locations |
 | `skill_tools_list` | `dirs?`, `allow?`, `deny?` | inventory callable skill AI-tools (scripts, hooks, tools); policy-filtered |
 | `skill_tools_audit` | `threshold?`, `dirs?` | static risk audit of discovered skill AI-tools; never executes anything |
-| `skill_tools_run` | `name`, `args?`, `timeout_ms?`, `dirs?`, `allow?`, `deny?`, `env?` | explicitly execute one skill AI-tool; bounded, captured, redacted, policy-gated |
+| `skill_tools_docs` | `dirs?`, `allow?`, `deny?` | TOOLS.md reference of the callable skill AI-tool surface |
+| `skill_tools_run` | `name`, `args?`, `json_args?`, `timeout_ms?`, `dirs?`, `allow?`, `deny?`, `env?` | explicitly execute one skill AI-tool; bounded, captured, redacted, policy-gated; `json_args` is validated against the tool's declared `argsSchema` |
 
 `skill_tools_run` makes the skill ecosystem executable by the host LLM: the
 host first lists the tools, then calls the ones it needs with a space-separated

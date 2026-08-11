@@ -48,9 +48,9 @@ COMMANDS
   agents    Generate AGENTS.md (default), list/show the agent profiles, or
             run <profile>/--all with a request
   graph     Emit a skill or typed ecosystem graph (--ecosystem, --json | --dot | --mmd, --top N, --threshold X)
-  tools     list|describe|run|run-batch|dry-run|audit|docs|history  Callable
-            AI-tools: skill scripts/hooks/tools as bounded, explicit, captured
-            tools for the host LLM (--json)
+  tools     list|describe|run|run-batch|dry-run|audit|docs|policy|history
+            Callable AI-tools: skill scripts/hooks/tools as bounded, explicit,
+            captured tools for the host LLM (--json)
   --version | --help  GLOBAL FLAGS
   --registry DIR   Central registry dir (default ~/.agents/skills/.parasite-skill)
   --dirs a,b       Extra scan dirs
@@ -63,11 +63,23 @@ COMMANDS
 
 TOOLS FLAGS
   --args STR       Space-separated arguments appended to a tools run command
+  --json-args JSON Structured args validated against the tool's declared argsSchema
   --name NAME      Tool name for tools describe/run
   --names a,b,c    Tool names for tools run-batch
   --continue       tools run-batch: keep going after a failed tool
+  --tool-env K=V,K=V  Inline env overrides for one tool run
+  --dry-run        Preview without executing (tools policy, agents run)
   --timeout-ms N   Tool execution timeout (default 30000, cap 300000;
                    project tools.timeoutMs is the fallback)
+  --policy-allow a,b   tools policy: set allow list
+  --policy-deny a,b    tools policy: set deny list
+  --policy-env a,b     tools policy: set env key allowlist
+  --policy-timeout-ms N  tools policy: set timeoutMs
+  --scoped NAME        tools policy: target a scoped key (profile:<name> | sets:<set>)
+  --scoped-allow/--scoped-deny/--scoped-env  scoped sub-lists
+  --clear-scoped       tools policy: remove the --scoped key
+  --drop-policy        tools policy: remove the whole tools block
+  --policy-file PATH   tools policy: target a specific config file
   --max-tools N    agents run: cap the number of script tools executed
   --threshold X    tools audit: gate on low|medium|high risk
   --clear          tools history: clear the run ledger
@@ -178,12 +190,16 @@ COMMANDS
   dry-run <name> [args] Preview the exact command without executing
   audit                Static risk audit of discovered tools
   docs                 Generate a TOOLS.md reference of the tool surface
+  policy               Read or edit the project tools policy (see below)
   history              Show the local execution ledger (--clear to reset)
 
 FLAGS
   --args STR       Space-separated arguments appended to the tool command
+  --json-args JSON Structured args validated against the tool's argsSchema
   --names a,b,c    Tool names for run-batch
   --continue       run-batch: continue after a failed tool
+  --tool-env K=V,K=V  Inline env overrides for this run
+  --dry-run        Preview without executing (policy)
   --timeout-ms N   Execution timeout (default 30000, cap 300000)
   --threshold X    audit gate on low|medium|high
   --limit N        history entries to show
@@ -197,6 +213,11 @@ POLICY
   Deny wins; a non-empty allow list must match. Tool names support * globs.
   Skills can declare per-tool description/argsSchema via a "tools": JSON block
   in their SKILL.md frontmatter.
+
+  Edit it from the CLI (writes parasite-skill.json, --dry-run to preview):
+    tools policy --allow "a__*" --deny "b__*" --env PATH --policy-timeout-ms 60000
+    tools policy --scoped profile:security-auditor --scoped-deny "*__deploy*"
+    tools policy --drop-policy
 
 SAFETY
   Tools are discovered from local skill assets only and run only when this
@@ -336,6 +357,20 @@ export function parseFlags(argv) {
       case "--env-filter": { const v = value(++i, a); if (v !== undefined) flags.envFilter = v; break; }
       case "--no-tools": flags.noTools = true; break;
       case "--max-tool-calls": { const v = value(++i, a); if (v !== undefined) flags.maxToolCalls = num(v); break; }
+      case "--json-args": { const v = value(++i, a); if (v !== undefined) flags.jsonArgs = v; break; }
+      case "--tool-env": { const v = value(++i, a); if (v !== undefined) flags.toolEnv = v; break; }
+      case "--dry-run": flags.dryRun = true; break;
+      case "--policy-allow": { const v = value(++i, a); if (v !== undefined) flags.policyAllow = v; break; }
+      case "--policy-deny": { const v = value(++i, a); if (v !== undefined) flags.policyDeny = v; break; }
+      case "--policy-env": { const v = value(++i, a); if (v !== undefined) flags.policyEnv = v; break; }
+      case "--policy-timeout-ms": { const v = value(++i, a); if (v !== undefined) flags.policyTimeoutMs = v; break; }
+      case "--scoped": { const v = value(++i, a); if (v !== undefined) flags.scoped = v; break; }
+      case "--scoped-allow": { const v = value(++i, a); if (v !== undefined) flags.scopedAllow = v; break; }
+      case "--scoped-deny": { const v = value(++i, a); if (v !== undefined) flags.scopedDeny = v; break; }
+      case "--scoped-env": { const v = value(++i, a); if (v !== undefined) flags.scopedEnv = v; break; }
+      case "--clear-scoped": flags.clearScoped = true; break;
+      case "--drop-policy": flags.dropPolicy = true; break;
+      case "--policy-file": { const v = value(++i, a); if (v !== undefined) flags.policyFile = v; break; }
       case "--server": { const v = value(++i, a); if (v !== undefined) flags.server = v; break; }
       default:
         if (a.startsWith("-")) {

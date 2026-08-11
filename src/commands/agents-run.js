@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { composePayload, loadRegistry, loadSetsWithProject, registryDir } from "../engine.js";
 import { AGENT_PROFILES } from "../data/agent-profiles.js";
-import { listSkillTools, policyFor, runSkillTool } from "../ai-tools.js";
+import { listSkillTools, policyFor, resolveToolRun, runSkillTool } from "../ai-tools.js";
 import { fmt } from "./_lib.js";
 import { smallLogo } from "../logo.js";
 
@@ -17,7 +17,7 @@ function slugify(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 48).replace(/^-|-$/g, "") || "request";
 }
 
-function runProfile(profile, request, { payload, sets, reg, policyConfig, maxTools, timeoutMs, maxChars, top, excludeSkills, ranTools }) {
+function runProfile(profile, request, { payload, sets, reg, policyConfig, maxTools, timeoutMs, maxChars, top, excludeSkills, ranTools, dryRun = false }) {
   const def = AGENT_PROFILES[profile];
   // Per-profile policy resolution: project base rules merged with scoped rules
   // keyed by profile:<name> and sets:<set> — so one config file can express
@@ -52,6 +52,27 @@ function runProfile(profile, request, { payload, sets, reg, policyConfig, maxToo
       continue;
     }
     ranTools.add(tool.name);
+    if (dryRun) {
+      // Preview only: resolve the exact command and check policy without
+      // executing anything or touching the audit ledger.
+      try {
+        const resolved = resolveToolRun(payload, tool.name, request, { policy });
+        toolRuns.push({
+          ok: true,
+          dry_run: true,
+          name: tool.name,
+          skill: tool.skill,
+          command: resolved.tool.command,
+          argv: resolved.argv.map(String),
+          cwd: resolved.cwd,
+          timeout_ms: resolved.timeoutMs,
+          duration_ms: 0,
+        });
+      } catch (err) {
+        toolRuns.push({ ok: false, name: tool.name, skill: tool.skill, status: 2, stderr: String(err.message ?? err), duration_ms: 0 });
+      }
+      continue;
+    }
     try {
       toolRuns.push(runSkillTool(payload, tool.name, request, { timeoutMs: runTimeoutMs, policy, registry: reg }));
     } catch (err) {
@@ -105,8 +126,23 @@ export function cmdAgentsRun(args = {}) {
     }
     const ranTools = new Set();
     const reports = Object.keys(AGENT_PROFILES).map((name) =>
-      runProfile(name, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools }),
+      runProfile(name, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun }),
     );
+    if (args.dryRun) {
+      console.log(`${smallLogo()} agent dry-run: all ${reports.length} profiles (nothing executed)`);
+      for (const report of reports) {
+        const wouldRun = report.runs.filter((run) => run.ok);
+        console.log(`  ${report.profile}: ${wouldRun.length}/${report.runs.length} tools would run`);
+        for (const run of wouldRun) {
+          console.log(`    - ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)}`);
+        }
+        for (const blocked of report.runs.filter((run) => !run.ok)) {
+          console.log(`    - ${blocked.name}: blocked — ${blocked.stderr}`);
+        }
+      }
+      console.log("  ledger untouched; no reports written");
+      return 0;
+    }
     const combined = {
       kind: "parasite-skill-agent-run-all",
       request,
@@ -154,7 +190,22 @@ export function cmdAgentsRun(args = {}) {
   }
 
   const ranTools = new Set();
-  const report = runProfile(profile, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools });
+  const report = runProfile(profile, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun });
+  if (args.dryRun) {
+    console.log(`${smallLogo()} agent dry-run: ${profile} (nothing executed)`);
+    console.log(`  request: ${request}`);
+    console.log(`  skills:  ${report.decision.selectedSkills.map((skill) => skill.name).join(", ") || "none"}`);
+    const wouldRun = report.runs.filter((run) => run.ok);
+    console.log(`  tools:   ${wouldRun.length}/${report.runs.length} would run`);
+    for (const run of wouldRun) {
+      console.log(`    - ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)} (cwd ${run.cwd})`);
+    }
+    for (const blocked of report.runs.filter((run) => !run.ok)) {
+      console.log(`    - ${blocked.name}: blocked — ${blocked.stderr}`);
+    }
+    console.log("  ledger untouched; no reports written");
+    return 0;
+  }
   const dir = join(reg, "agents");
   mkdirSync(dir, { recursive: true });
   const base = `${profile}-${slugify(request)}`;

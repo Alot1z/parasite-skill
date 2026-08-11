@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scan, composePayload, mergeConfig } from "../src/engine.js";
-import { auditSkillTools, filterToolsByPolicy, listSkillTools, policyFor, readToolRuns, runSkillTool } from "../src/ai-tools.js";
+import { auditSkillTools, filterToolsByPolicy, listSkillTools, policyFor, readToolRuns, runSkillTool, validateToolArgs } from "../src/ai-tools.js";
 import { cmdTools } from "../src/commands/tools.js";
 import { cmdAgentsRun } from "../src/commands/agents-run.js";
 import { cmdAgentsList } from "../src/commands/agents-list.js";
@@ -323,6 +323,31 @@ describe("Python MCP twin parity", () => {
     expect(risk).toBe("high");
   });
 
+  test("python twin skill_tools_docs returns a TOOLS.md reference", () => {
+    const base = join(tmpdir(), `sr-py-docs-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const skillDir = join(base, ".agents", "skills", "demo-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n");
+    writeFileSync(join(skillDir, "scripts", "hello.py"), 'print("hi")\n');
+    writeFileSync(
+      join(regDir, "registry.json"),
+      JSON.stringify({ skills: [{ name: "demo-skill", path: skillDir, assets: [{ path: "scripts/hello.py", group: "scripts", language: "python" }] }] }),
+    );
+    const code = [
+      "import os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, 'skill/scripts')",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_docs', {})",
+      "print('demo-skill__hello' in text)",
+    ].join("; ");
+    const ok = execFileSync(PY, ["-c", code], { encoding: "utf8" }).trim();
+    expect(ok).toBe("True");
+  });
+
   test("python twin skill_tools_run enforces deny policy", () => {
     const base = join(tmpdir(), `sr-py-deny-${Date.now()}`);
     bases.push(base);
@@ -563,6 +588,210 @@ describe("project tools config", () => {
   });
 });
 
+describe("args schema validation", () => {
+  const typedTool = {
+    name: "x__y",
+    argsSchema: {
+      type: "object",
+      properties: {
+        port: { type: "integer" },
+        mode: { type: "string", enum: ["a", "b"] },
+      },
+      required: ["port"],
+    },
+  };
+
+  test("structured json args are validated against the declared schema", () => {
+    expect(validateToolArgs(typedTool, "", { port: 8080, mode: "a" })).toEqual({ port: 8080, mode: "a" });
+    expect(() => validateToolArgs(typedTool, "", { mode: "a" })).toThrow(/missing required arg/);
+    expect(() => validateToolArgs(typedTool, "", { port: "x" })).toThrow(/must be an integer/);
+    expect(() => validateToolArgs(typedTool, "", { port: 1, mode: "z" })).toThrow(/must be one of/);
+    expect(() => validateToolArgs(typedTool, "", { port: 1, extra: true })).toThrow(/unknown arg/);
+  });
+
+  test("positional mode honors maxLength and required schemas", () => {
+    const capped = { name: "c", argsSchema: { type: "object", properties: { args: { type: "string", maxLength: 3 } } } };
+    expect(validateToolArgs(capped, "ab", undefined)).toBeNull();
+    expect(() => validateToolArgs(capped, "abcd", undefined)).toThrow(/maxLength/);
+    expect(() => validateToolArgs(typedTool, "x", undefined)).toThrow(/requires structured/);
+    expect(() => validateToolArgs({ name: "n" }, "", { x: 1 })).toThrow(/no argsSchema/);
+  });
+
+  test("tools run --json-args executes with deterministic key=value argv and exit 3 on invalid", () => {
+    const { dirs, registry } = tempSkills({
+      "meta-skill/SKILL.md": [
+        "---",
+        "name: meta-skill",
+        "description: Tool metadata.",
+        "tools: |",
+        '  {"meta-skill__hello": {',
+        '    "argsSchema": { "type": "object", "properties": { "port": { "type": "integer" } }, "required": ["port"] }',
+        "  }}",
+        "---",
+        "",
+      ].join("\n"),
+      "meta-skill/scripts/hello.py": "import sys\nprint('port=' + next((a for a in sys.argv[1:] if a.startswith('port=')), 'missing'))\n",
+    });
+    const origLog = console.log;
+    const origErr = console.error;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    console.error = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "run", name: "meta-skill__hello", jsonArgs: '{"port": 8080}' })).toBe(0);
+      expect(out.join("\n")).toContain("port=8080");
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "run", name: "meta-skill__hello", jsonArgs: '{"port": "bad"}' })).toBe(3);
+      expect(out.join("\n")).toContain("must be an integer");
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+  });
+
+  test("tools run --tool-env injects inline env for one run", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/envtool.py": "import os\nprint('TOOL_VAR=' + os.environ.get('TOOL_VAR', 'unset'))\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "run", name: "demo-skill__envtool", toolEnv: "TOOL_VAR=hi" })).toBe(0);
+      expect(out.join("\n")).toContain("TOOL_VAR=hi");
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("tools policy editor", () => {
+  test("writes allow/deny/env/timeoutMs into a config file and dry-run does not", () => {
+    const { base, dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+    });
+    const configPath = join(base, "parasite-skill.json");
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(
+        cmdTools({
+          registry,
+          dirs,
+          toolsAction: "policy",
+          policyFile: configPath,
+          policyAllow: "a__*,b__*",
+          policyDeny: "c__*",
+          policyTimeoutMs: "45000",
+        }),
+      ).toBe(0);
+      expect(out.join("\n")).toContain("written");
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      expect(config.tools.allow).toEqual(["a__*", "b__*"]);
+      expect(config.tools.deny).toEqual(["c__*"]);
+      expect(config.tools.timeoutMs).toBe(45000);
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "policy", policyFile: configPath, policyDryRun: true, policyDeny: "d__*" })).toBe(0);
+      expect(out.join("\n")).toContain("dry-run");
+      expect(JSON.parse(readFileSync(configPath, "utf-8")).tools.deny).toEqual(["c__*"]);
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "policy", policyFile: configPath, scoped: "profile:security-auditor", scopedDeny: "*__deploy*" })).toBe(0);
+      const updated = JSON.parse(readFileSync(configPath, "utf-8"));
+      expect(updated.tools.scoped["profile:security-auditor"].deny).toEqual(["*__deploy*"]);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("--drop-policy removes the tools block entirely", () => {
+    const { base, dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+    });
+    const configPath = join(base, "parasite-skill.json");
+    writeFileSync(configPath, JSON.stringify({ tools: { deny: ["c__*"] } }, null, 2));
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "policy", policyFile: configPath, dropPolicy: true })).toBe(0);
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      expect(config.tools).toBeUndefined();
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("agents run dry-run and trace aggregation", () => {
+  test("agents run --dry-run previews commands without executing or recording", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/inspect.py": "import sys\nprint('inspected')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], dryRun: true, maxTools: 4 })).toBe(0);
+      const text = out.join("\n");
+      expect(text).toContain("agent dry-run");
+      expect(text).toContain("would run");
+      expect(text).toContain("demo-skill__inspect");
+      expect(existsSync(join(registry, "agents"))).toBe(false);
+      expect(readToolRuns(registry)).toHaveLength(0);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("trace aggregates a directory of transcripts and supports --json", () => {
+    const { base, dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+    });
+    const logs = join(base, "logs");
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, "a.txt"), "used demo-skill for debugging\n");
+    writeFileSync(join(logs, "b.md"), "demo-skill again here\n");
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTrace({ registry, dirs, file: logs })).toBe(0);
+      const text = out.join("\n");
+      expect(text).toContain("files traced: 2");
+      expect(text).toContain("skills mentioned in transcripts: 1");
+      expect(text).toContain("demo-skill");
+      out.length = 0;
+      expect(cmdTrace({ registry, dirs, file: logs, json: true })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      expect(parsed.files.length).toBe(2);
+      expect(parsed.skills[0]).toEqual(["demo-skill", 2]);
+      expect(parsed.tools).toBeTruthy();
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("MCP skill_tools_docs", () => {
+  test("tools/call skill_tools_docs returns the TOOLS.md reference", async () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const res = await handleMessage({
+      jsonrpc: "2.0",
+      id: 6,
+      method: "tools/call",
+      params: { name: "skill_tools_docs", arguments: { dirs, registry } },
+    });
+    expect(res.result.content[0].text).toContain("# Skill AI-Tools");
+    expect(res.result.content[0].text).toContain("demo-skill__hello");
+  });
+});
+
 describe("scoped tool policy", () => {
   test("policyFor merges profile and set scoped rules over the base", () => {
     const policy = {
@@ -715,7 +944,7 @@ describe("trace ledger counts", () => {
     try {
       expect(cmdTrace({ registry, dirs, file: join(base, "transcript.txt") })).toBe(0);
       const text = out.join("\n");
-      expect(text).toContain("skills mentioned in transcript: 1");
+      expect(text).toContain("skills mentioned in transcripts: 1");
       expect(text).toContain("demo-skill");
       expect(text).toContain("tools executed (ledger): 1 distinct / 1 runs (1 ok)");
       expect(text).toContain("demo-skill__hello");

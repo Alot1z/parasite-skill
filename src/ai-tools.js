@@ -5,6 +5,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { VERSION } from "./engine.js";
 
 const TOOL_GROUPS = new Set(["scripts", "hooks", "tools"]);
 
@@ -194,6 +195,89 @@ function envForPolicy(baseEnv, policy) {
   return env;
 }
 
+// ---------------------------------------------------------------- args validation
+
+function validateScalar(propSchema, key, value) {
+  const t = propSchema.type;
+  if (t === "string") {
+    if (typeof value !== "string") return `${key} must be a string`;
+    if (propSchema.minLength != null && value.length < propSchema.minLength) return `${key} below minLength ${propSchema.minLength}`;
+    if (propSchema.maxLength != null && value.length > propSchema.maxLength) return `${key} exceeds maxLength ${propSchema.maxLength}`;
+  } else if (t === "number") {
+    if (typeof value !== "number" || Number.isNaN(value)) return `${key} must be a number`;
+  } else if (t === "integer") {
+    if (!Number.isInteger(value)) return `${key} must be an integer`;
+  } else if (t === "boolean") {
+    if (typeof value !== "boolean") return `${key} must be a boolean`;
+  } else if (t === "array") {
+    if (!Array.isArray(value)) return `${key} must be an array`;
+  }
+  if (Array.isArray(propSchema.enum) && !propSchema.enum.includes(value)) {
+    return `${key} must be one of ${propSchema.enum.join(", ")}`;
+  }
+  return null;
+}
+
+function argsError(message) {
+  const err = new Error(message);
+  err.code = "ARGS_INVALID";
+  return err;
+}
+
+/**
+ * Validate the arguments for a tool against its declared argsSchema. Two modes:
+ * - positional string mode (default): bounded by an optional `args` maxLength;
+ *   if the schema declares required properties, structured --json-args is required.
+ * - structured mode (options.jsonArgs): the value is parsed as JSON and every
+ *   property is type/required/enum checked against schema.properties.
+ * Returns the normalized structured object, or null for plain positional args.
+ * Throws with code ARGS_INVALID on any violation; never executes anything.
+ */
+export function validateToolArgs(tool, argsString, jsonArgs) {
+  if (!tool?.argsSchema) {
+    if (jsonArgs !== undefined) {
+      throw argsError(`tool ${tool?.name ?? "?"} declares no argsSchema; structured --json-args rejected`);
+    }
+    return null;
+  }
+  const schema = tool.argsSchema;
+  if (schema.type && schema.type !== "object") {
+    throw argsError(`argsSchema for ${tool.name} must be object type`);
+  }
+  if (jsonArgs !== undefined) {
+    let obj;
+    try {
+      obj = typeof jsonArgs === "string" ? JSON.parse(jsonArgs) : jsonArgs;
+    } catch {
+      throw argsError(`json args for ${tool.name} are not valid JSON`);
+    }
+    if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
+      throw argsError(`json args for ${tool.name} must be an object`);
+    }
+    const props = schema.properties ?? {};
+    for (const key of schema.required ?? []) {
+      if (!(key in obj)) throw argsError(`missing required arg for ${tool.name}: ${key}`);
+    }
+    for (const [key, value] of Object.entries(obj)) {
+      const prop = props[key];
+      if (!prop || typeof prop !== "object") throw argsError(`unknown arg for ${tool.name}: ${key}`);
+      const violation = validateScalar(prop, key, value);
+      if (violation) throw argsError(`${tool.name}: ${violation}`);
+    }
+    return obj;
+  }
+  // Positional mode: only strings, capped when the schema says so.
+  if (schema.properties?.args?.type === "string" && schema.properties.args.maxLength != null) {
+    if (String(argsString ?? "").length > schema.properties.args.maxLength) {
+      throw argsError(`${tool.name}: args exceed maxLength ${schema.properties.args.maxLength}`);
+    }
+  }
+  if (Array.isArray(schema.required) && schema.required.length) {
+    throw argsError(`${tool.name} requires structured --json-args (required: ${schema.required.join(", ")})`);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- resolution
 
 /** Resolve the exact command/argv/cwd/timeout/env a run would use, without
@@ -213,7 +297,14 @@ export function resolveToolRun(payload, name, args = "", options = {}) {
     err.code = "MISSING_FILE";
     throw err;
   }
-  const argv = [script, ...String(args ?? "").split(/\s+/).filter(Boolean)];
+  const validated = validateToolArgs(tool, args, options.jsonArgs);
+  // Structured args become deterministic `key=value` argv entries (sorted so
+  // repeated runs are stable); plain positional args stay space-split.
+  const argvArgs =
+    validated !== null
+      ? Object.entries(validated).sort((a, b) => a[0].localeCompare(b[0])).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
+      : String(args ?? "").split(/\s+/).filter(Boolean);
+  const argv = [script, ...argvArgs];
   const timeoutMs = Math.max(1000, Math.min(Number(options.timeoutMs) || 30_000, 300_000));
   return {
     tool,
@@ -330,6 +421,49 @@ export function clearToolRuns(regDir) {
   } catch {
     /* best-effort */
   }
+}
+
+// ---------------------------------------------------------------- TOOLS.md render
+
+/**
+ * Render the TOOLS.md reference for a policy-filtered tool list. Shared by the
+ * `tools docs` CLI command and the MCP `skill_tools_docs` tool so both surfaces
+ * cannot drift.
+ */
+export function renderToolsDocs(payload, policy) {
+  const tools = filterToolsByPolicy(listSkillTools(payload), policy);
+  const esc = (value) => String(value ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  const lines = [
+    "# Skill AI-Tools (TOOLS.md)",
+    "",
+    `Generated by parasite-skill v${VERSION}. Callable scripts/hooks/tools discovered from the registry.`,
+    "",
+    `${tools.length} callable tools`,
+    "",
+    "| Tool | Language | Skill | Description |",
+    "|---|---|---|---|",
+    ...tools.map((tool) => `| \`${tool.name}\` | ${tool.language} | ${tool.skill} | ${esc(tool.description).slice(0, 80)} |`),
+    "",
+    "## Run policy",
+    "- Execution is explicit (`tools run <name>`), time-bounded (default 30000ms, cap 300000ms), captured, redacted, and recorded in the audit ledger.",
+    "- Project policy (`parasite-skill.json` `tools` block): allow/deny/env lists; deny wins, a non-empty allow list must match, `*` globs supported.",
+    "- Scoped policy keys (`scoped`): `profile:<name>` and `sets:<set-name>` merge extra allow/deny/env for agents run.",
+    "- Structured args follow each tool's declared `argsSchema` (validated before execution).",
+    "- Routing or planning alone never executes tools.",
+    "",
+    "## Per-skill details",
+    ...tools.map((tool) => [
+      `### ${tool.name}`,
+      "",
+      `- Skill: ${tool.skill}`,
+      `- Language: ${tool.language}`,
+      `- Script: \`${tool.path}\``,
+      `- Description: ${esc(tool.description)}`,
+      ...(tool.argsSchema ? [`- Args schema: \`${JSON.stringify(tool.argsSchema)}\``] : []),
+      "",
+    ]).flat(),
+  ];
+  return lines.join("\n") + "\n";
 }
 
 // ---------------------------------------------------------------- static audit

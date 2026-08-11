@@ -50,12 +50,16 @@ function toolSchemas(tools, limit = 40) {
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: {
-        type: "object",
-        properties: {
-          args: { type: "string", description: "space-separated arguments appended to the tool command" },
-        },
-      },
+      // Skills that declare an argsSchema expose their typed surface to the
+      // model; otherwise a plain space-separated `args` string is offered.
+      parameters:
+        tool.argsSchema ??
+        ({
+          type: "object",
+          properties: {
+            args: { type: "string", description: "space-separated arguments appended to the tool command" },
+          },
+        }),
     },
   }));
 }
@@ -174,7 +178,21 @@ export async function cmdLlm(args) {
       let result;
       try {
         const parsedArgs = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : (fn.arguments ?? {});
-        result = runSkillTool(payload, fn.name, parsedArgs?.args ?? "", { timeoutMs: toolTimeoutMs, policy, registry: reg });
+        const toolDef = tools.find((tool) => tool.name === fn.name);
+        // Tools with a declared typed schema (properties beyond `args`, or any
+        // required fields) get the model's structured object validated and
+        // passed as deterministic key=value argv; everything else stays a plain
+        // positional string.
+        const structured =
+          !!toolDef?.argsSchema &&
+          (Object.keys(toolDef.argsSchema.properties ?? {}).some((key) => key !== "args") ||
+            (toolDef.argsSchema.required?.length ?? 0) > 0);
+        result = runSkillTool(payload, fn.name, structured ? "" : (parsedArgs?.args ?? ""), {
+          timeoutMs: toolTimeoutMs,
+          policy,
+          registry: reg,
+          ...(structured ? { jsonArgs: parsedArgs } : {}),
+        });
       } catch (err) {
         result = { ok: false, name: fn.name, status: 2, stderr: String(err.message ?? err), duration_ms: 0 };
       }

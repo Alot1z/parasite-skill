@@ -3,8 +3,8 @@
 
 Polyglot parity with src/mcp-server.js: same stdio JSON-RPC 2.0 protocol, same
 tool set (scan/validate/route/sets/plan/compose/refs/wikis/graph/list_installs/
-skill_tools_list/skill_tools_run). Zero dependencies — stdlib only. Boots in
-tens of milliseconds.
+skill_tools_list/skill_tools_audit/skill_tools_docs/skill_tools_run). Zero
+dependencies — stdlib only. Boots in tens of milliseconds.
 
 Run:  python scripts/mcp_server.py   (or:  bun src/mcp-server.js)
 """
@@ -126,6 +126,7 @@ TOOLS = [
     {"name": "list_installs", "description": "List where the parasite-skill skill is installed across clients.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "skill_tools_list", "description": "Inventory callable skill AI-tools (scripts, hooks, tools) from the shared registry.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "skill_tools_audit", "description": "Static risk audit of discovered skill AI-tools (eval/subprocess/network/secrets patterns). Never executes anything.", "inputSchema": {"type": "object", "properties": {"threshold": {"type": "string"}}}},
+    {"name": "skill_tools_docs", "description": "Return a TOOLS.md-style reference of the callable skill AI-tool surface.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "skill_tools_run", "description": "Explicitly execute one skill AI-tool. Bounded, captured, and redacted; never runs automatically.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "args": {"type": "string"}, "timeout_ms": {"type": "number"}, "allow": {"type": "array", "items": {"type": "string"}}, "deny": {"type": "array", "items": {"type": "string"}}, "env": {"type": "array", "items": {"type": "string"}}}, "required": ["name"]}},
 ]
 
@@ -352,6 +353,38 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         print(json.dumps(entries, indent=2))
         return 0
 
+    def do_skill_tools_docs():
+        # Parity with the JS twin: a TOOLS.md-style reference from the shared
+        # registry. Only metadata; nothing is executed.
+        payload = load_registry(reg, extra)
+        runnable = {".py": "python", ".js": "node", ".mjs": "node", ".cjs": "node", ".sh": "bash", ".bash": "bash"}
+        rows = []
+        for skill in payload.get("skills", []):
+            for asset in skill.get("assets", []):
+                if asset.get("group") not in ("scripts", "hooks", "tools"):
+                    continue
+                path = asset.get("path", "")
+                ext = path[path.rfind("."):].lower()
+                command = runnable.get(ext)
+                if not command:
+                    continue
+                base = path.split("/")[-1].rsplit(".", 1)[0]
+                name = re.sub(r"[^a-z0-9_-]+", "_", f"{skill['name']}__{base}".lower()).strip("_")
+                rows.append((name, command, skill["name"], base))
+        rows.sort()
+        lines = [
+            "# Skill AI-Tools (TOOLS.md) — python twin",
+            "",
+            f"{len(rows)} callable tools",
+            "",
+            "| Tool | Language | Skill | Description |",
+            "|---|---|---|---|",
+        ]
+        lines += [f"| `{name}` | {command} | {skill} | {desc} |" for name, command, skill, desc in rows]
+        lines += ["", "Execution is explicit, time-bounded, captured, and redacted. Never automatic."]
+        print("\n".join(lines))
+        return 0
+
     def do_skill_tools_run():
         name = str(params.get("name", ""))
         tool_args = str(params.get("args") or "")
@@ -431,6 +464,7 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         "list_installs": do_list,
         "skill_tools_list": do_skill_tools_list,
         "skill_tools_audit": do_skill_tools_audit,
+        "skill_tools_docs": do_skill_tools_docs,
         "skill_tools_run": do_skill_tools_run,
     }
     fn = handlers.get(name)
