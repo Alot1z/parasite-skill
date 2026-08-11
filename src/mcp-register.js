@@ -50,6 +50,14 @@ const TARGETS = [
     set: (cfg, v) => (cfg.mcpServers = v),
   },
   {
+    id: "claude-code-project",
+    label: "Claude Code (project .mcp.json)",
+    // Project-scope MCP config (the shared .mcp.json Claude Code reads at repo root).
+    file: () => join(process.cwd(), ".mcp.json"),
+    get: (cfg) => cfg.mcpServers,
+    set: (cfg, v) => (cfg.mcpServers = v),
+  },
+  {
     id: "claude-desktop",
     label: "Claude Desktop",
     file: () =>
