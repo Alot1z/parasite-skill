@@ -13,6 +13,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pickList, progress } from "./tui.js";
+import { banner, smallLogo } from "./logo.js";
 
 export const SKILL_NAME = "skill-router";
 
@@ -158,30 +160,36 @@ export async function runInstall(args) {
 
   let chosen = targets;
   if (!args.yes && !args.all && targets.length > 1 && !args.agents?.length) {
-    const { createInterface } = await import("node:readline/promises");
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    console.log("Detected clients:");
-    targets.forEach((t, i) => console.log(`  ${i + 1}. ${t.label} -> ${t.dest}`));
-    const answer = await rl.question(`Select clients (comma-separated numbers, or 'all'): `);
-    rl.close();
-    if (answer.trim().toLowerCase() !== "all" && answer.trim() !== "") {
-      const idxs = answer.split(",").map((x) => parseInt(x.trim(), 10) - 1).filter((i) => i >= 0 && i < targets.length);
-      if (idxs.length) chosen = idxs.map((i) => targets[i]);
+    console.log(banner());
+    const picked = await pickList(
+      targets.map((t, i) => ({ id: String(i), label: t.label, detail: t.dest.replace(/\\/g, "/"), checked: i === 0 })),
+      { multi: true, title: "Which clients should get skill-router?" },
+    );
+    if (picked === null) {
+      console.log("cancelled");
+      return 1;
     }
+    chosen = picked.map((idx) => targets[Number(idx)]).filter(Boolean);
+  } else {
+    console.log(banner());
   }
-
-  const rows = [];
-  for (const t of chosen) {
-    const res = installOne(t.dest, mode, source, args.force);
-    const ok = res.ok && verify(t.dest);
-    rows.push({ label: t.label, dest: t.dest.replace(/\\/g, "/"), mode: res.mode, ok, error: res.error ?? res.note });
-  }
+  const rows = await progress("installing skill-router", async (draw) => {
+    const out = [];
+    for (let i = 0; i < chosen.length; i++) {
+      const t = chosen[i];
+      draw((i + 0.5) / chosen.length, t.label);
+      const res = installOne(t.dest, mode, source, args.force);
+      const ok = res.ok && verify(t.dest);
+      out.push({ label: t.label, dest: t.dest.replace(/\\/g, "/"), mode: res.mode, ok, error: res.error ?? res.note });
+    }
+    return out;
+  });
 
   console.log("");
   for (const r of rows) {
-    const mark = r.ok ? "ok" : "FAIL";
+    const mark = r.ok ? smallLogo() : "FAIL";
     const extra = r.ok ? `(${r.mode})` : `(${r.error})`;
-    console.log(`  [${mark}] ${r.label}: ${r.dest} ${extra}`);
+    console.log(`  ${mark} ${r.label}: ${r.dest} ${extra}`);
   }
   const okCount = rows.filter((r) => r.ok).length;
   console.log(`\ninstalled ${okCount}/${rows.length} -> ${scope} scope, mode: ${mode}`);

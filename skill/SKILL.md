@@ -38,6 +38,12 @@ Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or
 | `--dirs a,b` | Scan extra directories (e.g. a project's `.agents/skills`) |
 | `--json` | Machine-readable output for the AI layer |
 | `--force` | Force a rescan / force re-loading always-on skills mid-session |
+| `--graph [--dot|--mmd]` | Emit a skill-relatedness graph (Jaccard over keywords; DOT or Mermaid) |
+| `--sets --new/--add/--remove` | Edit skill-sets: create custom sets, add/remove members (persisted to sets.custom.json) |
+| `--mcp add/remove/list` | Auto-register the skill-router MCP server in client configs — no manual config |
+| `--sync --init/--push/--pull` | Cloud-sync the skills tree to a git remote (backup + restore across machines) |
+| `--agents` | Generate AGENTS.md for the current project from the registry |
+| `--bundle` | Build a tarball + install.json for GitHub Pages (no-npm distribution) |
 
 ## The Routing Process
 

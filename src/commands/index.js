@@ -7,3 +7,7 @@ export { cmdWikis } from "./wikis.js";
 export { cmdPlan } from "./plan.js";
 export { cmdTrace } from "./trace.js";
 export { cmdLink } from "./link.js";
+export { cmdBundle } from "./bundle.js";
+export { cmdSync } from "./sync.js";
+export { cmdAgents } from "./sync.js";
+export { cmdGraph } from "./graph.js";

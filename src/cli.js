@@ -3,6 +3,7 @@ import { LOGO } from "./logo.js";
 import { VERSION } from "./engine.js";
 import * as commands from "./commands/index.js";
 import { CLIENTS, runInstall, runList, runRemove } from "./clients.js";
+import { runMcpAdd, runMcpRemove, runMcpList } from "./mcp-register.js";
 
 const HELP = `skill-router v${VERSION}
 
@@ -29,7 +30,12 @@ COMMANDS
   plan      "<request>"     Emit a routed execution plan
   trace     <file>          Count skill usage in a transcript
   link      Create/remove per-skill refs/wiki links (--unlink, --no-default)
-  mcp       Run as an MCP server on stdio (scan/route/sets/plan/refs/wikis/validate)
+  mcp       MCP control: add|remove|list register/remove the skill-router MCP
+            server in client configs (no manual config); bare mcp runs the server
+  bundle    Build a tarball + install.json manifest for GitHub Pages distribution
+  sync      Cloud-sync the skills tree to a git remote (--init URL | --push | --pull)
+  agents    Generate AGENTS.md for the current project (--out PATH)
+  graph     Emit a skill-relatedness graph (--dot | --mmd, --top N, --threshold X)
   --version | --help
 
 GLOBAL FLAGS
@@ -73,6 +79,12 @@ export function parseFlags(argv) {
       }
       case "--set": flags.set = true; break;
       case "--apply": { const v = value(++i, a); if (v !== undefined) flags.apply = v; break; }
+      case "--new": { const v = value(++i, a); if (v !== undefined) flags.new = v; break; }
+      case "--members": { const v = value(++i, a); if (v !== undefined) flags.members = v; break; }
+      case "--desc": { const v = value(++i, a); if (v !== undefined) flags.desc = v; break; }
+      case "--add": { const v = value(++i, a); if (v !== undefined) flags.add = v; break; }
+      case "--remove": { const v = value(++i, a); if (v !== undefined) flags.remove = v; break; }
+      case "--delete": { const v = value(++i, a); if (v !== undefined) flags.delete = v; break; }
       case "--per-skill": flags.per_skill = true; break;
       case "--unlink": flags.unlink = true; break;
       case "--no-default": flags.no_default = true; break;
@@ -84,6 +96,17 @@ export function parseFlags(argv) {
       case "--project": flags.scope = "project"; break;
       case "--version": case "-v": flags.action = "version"; break;
       case "--help": case "-h": flags.action = "help"; break;
+      case "--repo": { const v = value(++i, a); if (v !== undefined) flags.repo = v; break; }
+      case "--init": flags.init = true; break;
+      case "--push": flags.push = true; break;
+      case "--pull": flags.pull = true; break;
+      case "--status": flags.status = true; break;
+      case "--threshold": { const v = value(++i, a); if (v !== undefined) flags.threshold = v; break; }
+      case "--dot": flags.dot = true; break;
+      case "--mmd": flags.mmd = true; break;
+      case "--out": { const v = value(++i, a); if (v !== undefined) flags.out = v; break; }
+      case "--runtime": { const v = value(++i, a); if (v !== undefined) flags.runtime = v; break; }
+      case "--clients": { const v = value(++i, a); if (v !== undefined) flags.clients = v.split(",").map((x) => x.trim()).filter(Boolean); break; }
       case "--agent": case "-a": {
         const v = value(++i, a);
         if (v !== undefined) flags.agents.push(...v.split(",").map((x) => x.trim()).filter(Boolean));
@@ -135,7 +158,14 @@ export async function run(argv) {
     case "plan": return commands.cmdPlan(ctx);
     case "trace": return commands.cmdTrace(ctx);
     case "link": return commands.cmdLink(ctx);
+    case "bundle": return commands.cmdBundle(ctx);
+    case "sync": return commands.cmdSync(ctx);
+    case "agents": return commands.cmdAgents(ctx);
+    case "graph": return commands.cmdGraph(ctx);
     case "mcp": {
+      if (flags._[1] === "add") return runMcpAdd(ctx);
+      if (flags._[1] === "remove") return runMcpRemove(ctx);
+      if (flags._[1] === "list") return runMcpList();
       const { startMcpServer } = await import("./mcp-server.js");
       return await startMcpServer();
     }

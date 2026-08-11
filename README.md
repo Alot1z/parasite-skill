@@ -36,11 +36,15 @@ bun bin/skill-router.js install -a claude-code,codex,opencode   # specific clien
 bun bin/skill-router.js install --project            # install into ./<client>/skills instead
 bun bin/skill-router.js list                 # show installed instances
 bun bin/skill-router.js remove --yes         # uninstall from detected clients
+bun bin/skill-router.js mcp add             # auto-register the MCP server in client configs (no manual config)
+bun bin/skill-router.js mcp remove          # remove MCP registration
 ```
 
 The installer detects which clients you have, dedupes shared directories
 (e.g. Cline/Warp/Zed all read `~/.agents/skills`), and verifies `SKILL.md`
 exists after every install. Symlinks fall back to Windows junctions automatically.
+The interactive mode is a custom TUI: arrow keys + space to pick clients, live
+progress bar, custom logo — no package installs required.
 
 ## Routing
 
@@ -83,6 +87,24 @@ SKILL_ROUTER_HOME=/tmp/fake-home bun bin/skill-router.js install --yes   # sandb
 
 See `docs/RESEARCH.md` for the ecosystem research that shaped this package
 (skills.sh, agentskills.io, 10+ starred repos, star analysis).
+
+## Beyond the CLI
+
+- **No-npm install from GitHub Pages** — `bundle` builds a tarball + `install.json`;
+  the included `.github/workflows/deploy-pages.yml` serves it, and
+  `scripts/gh-install.sh` installs with a single curl (no node/npm/bun needed).
+- **Polyglot MCP** — the server ships in JS (`src/mcp-server.js`, runs under
+  bun and node) and Python (`scripts/mcp_server.py`) with identical JSON-RPC
+  protocol and tools. Boots in ~0.3s, zero resident memory.
+- **Cloud sync** — `sync --init <repo> / --push / --pull` backs up the whole
+  skills tree to git; the `template/` dir is a ready-made repo for it.
+- **Skill-sets editor** — `sets --new/--add/--remove` create custom sets
+  persisted to `sets.custom.json` (marked `*` in listings).
+- **AGENTS.md generator** — `agents` writes a project AGENTS.md with the full
+  skill inventory + always-on cadence.
+- **IX-inspired graph** — `graph --dot|--mmd` emits a skill-relatedness graph
+  (Jaccard over keywords). Self-contained; no upstream code vendored, so
+  upstream ix updates can never conflict.
 
 ## License
 

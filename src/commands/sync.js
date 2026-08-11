@@ -1,0 +1,164 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { registryDir, loadRegistry } from "../engine.js";
+import { smallLogo } from "../logo.js";
+
+const SKILLS_HOME = () => join(process.env.SKILL_ROUTER_HOME ?? process.env.HOME ?? process.env.USERPROFILE, ".agents", "skills");
+const GIT = () => (process.platform === "win32" ? "git.exe" : "git");
+
+function git(args, cwd) {
+  try {
+    return execFileSync(GIT(), args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (e) {
+    const msg = e.stderr?.toString()?.trim() || e.message;
+    throw new Error(msg);
+  }
+}
+
+/**
+ * Cloud sync: backs up the whole skills tree (registry + all installed skills)
+ * to a git remote. `sync --init <repo-url>` sets it up; `--push` and `--pull`
+ * sync. GitHub Actions template in template/ gives users a ready repo.
+ */
+export function cmdSync(args) {
+  const root = SKILLS_HOME();
+  if (!existsSync(root)) mkdirSync(root, { recursive: true });
+
+  const action = args.init ? "init" : args.push ? "push" : args.pull ? "pull" : args.status ? "status" : null;
+  if (!action) {
+    console.error("usage: sync --init <repo-url> | --push | --pull | --status");
+    return 1;
+  }
+
+  if (action === "init") {
+    const url = args.repo || (Array.isArray(args._) ? args._[1] : undefined);
+    if (!url) {
+      console.error("usage: sync --init <repo-url> (e.g. https://github.com/you/skill-router-sync.git)");
+      return 1;
+    }
+    if (existsSync(join(root, ".git"))) {
+      console.log(`${smallLogo()} already a git repo at ${root}`);
+      const remotes = git(["remote", "-v"], root);
+      if (!remotes.includes(url)) {
+        git(["remote", "add", "origin", url], root);
+        console.log(`  added remote: ${url}`);
+      }
+      return 0;
+    }
+    git(["init", "-b", "main"], root);
+    git(["config", "user.name", "skill-router-sync"], root);
+    git(["config", "user.email", "skill-router-sync@local"], root);
+    git(["remote", "add", "origin", url], root);
+    console.log(`${smallLogo()} git repo initialized at ${root}`);
+    console.log(`  remote: ${url}`);
+    console.log("  run: skill-router sync --push   (first backup)");
+    return 0;
+  }
+
+  if (action === "push") {
+    git(["add", "-A"], root);
+    const changed = git(["status", "--porcelain"], root);
+    if (!changed) {
+      console.log(`${smallLogo()} nothing to push — skills tree unchanged`);
+      return 0;
+    }
+    git(["commit", "-m", "sync: update skills"], root);
+    let branch = "main";
+    try {
+      branch = git(["rev-parse", "--abbrev-ref", "HEAD"], root);
+    } catch {
+      /* fresh repo with no commits yet — fall back to main */
+    }
+    try {
+      git(["push", "-u", "origin", branch], root);
+      console.log(`${smallLogo()} pushed ${changed.split("\n").length} change(s) to origin/${branch}`);
+    } catch (e) {
+      console.error(`push failed: ${e.message}`);
+      console.error("  (set a remote first: skill-router sync --init <repo-url>)");
+      return 1;
+    }
+    return 0;
+  }
+
+  if (action === "pull") {
+    try {
+      let branch = "main";
+      try {
+        branch = git(["rev-parse", "--abbrev-ref", "HEAD"], root);
+      } catch {
+        /* unborn HEAD */
+      }
+      const out = git(["pull", "origin", branch], root);
+      console.log(`${smallLogo()} pulled: ${out.split("\n").pop()}`);
+      return 0;
+    } catch (e) {
+      console.error(`pull failed: ${e.message}`);
+      return 1;
+    }
+  }
+
+  if (action === "status") {
+    const isRepo = existsSync(join(root, ".git"));
+    if (!isRepo) {
+      console.log(`${smallLogo()} no sync repo yet at ${root}`);
+      console.log("  run: skill-router sync --init <repo-url>");
+      return 1;
+    }
+    const remotes = git(["remote", "-v"], root);
+    let branch = "main";
+    try {
+      branch = git(["rev-parse", "--abbrev-ref", "HEAD"], root);
+    } catch {
+      /* unborn HEAD */
+    }
+    const dirty = git(["status", "--porcelain"], root);
+    console.log(`${smallLogo()} sync repo: ${root}`);
+    console.log(`  branch: ${branch}`);
+    console.log(remotes ? `  remote: ${remotes.split("\n")[0]}` : "  remote: none");
+    console.log(dirty ? `  changes: ${dirty.split("\n").length} file(s) uncommitted` : "  changes: clean");
+    return 0;
+  }
+  return 0;
+}
+
+/**
+ * Generates an AGENTS.md in the current project that tells any coding agent
+ * which skills exist and how to route requests through skill-router.
+ */
+export function cmdAgents(args) {
+  const reg = registryDir(args.registry);
+  const payload = loadRegistry(reg, args.dirs, args.force);
+  const out = args.out || join(process.cwd(), "AGENTS.md");
+  const skills = payload.skills.slice().sort((a, b) => a.name.localeCompare(b.name));
+
+  const lines = [];
+  lines.push("# AGENTS.md — generated by skill-router");
+  lines.push("");
+  lines.push("This project is wired to the skill-router skill ecosystem.");
+  lines.push("When you need a capability, route the request instead of guessing:");
+  lines.push("");
+  lines.push("```");
+  lines.push("/skill-router --route \"<what you need>\"   # top skills + best skill-set");
+  lines.push("/skill-router --plan \"<request>\"           # routed execution plan");
+  lines.push("```");
+  lines.push("");
+  lines.push(`## Available skills (${skills.length})`);
+  lines.push("");
+  for (const s of skills) {
+    lines.push(`- **${s.name}** — ${s.description}`);
+  }
+  lines.push("");
+  lines.push("## Always-on cadence");
+  lines.push("");
+  lines.push("1. **start**: tractatus-thinking → sequential-thinking (decompose the request)");
+  lines.push("2. **between tool calls**: doubt-driven-development before non-trivial decisions");
+  lines.push("3. **on failure**: debug-thinking / debugging-and-error-recovery");
+  lines.push("4. **before prose**: stop-slop");
+  lines.push("5. **after milestones**: verification-before-completion + code-review-and-quality");
+
+  writeFileSync(out, lines.join("\n") + "\n", "utf-8");
+  console.log(`${smallLogo()} AGENTS.md generated -> ${out}`);
+  console.log(`  ${skills.length} skills indexed from ${reg}`);
+  return 0;
+}

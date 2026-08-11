@@ -13,6 +13,30 @@ import { SETS as SETS_DATA } from "./data/sets.js";
 
 export const SETS = SETS_DATA;
 
+// Custom skill-sets live in the registry dir (sets.custom.json) and are merged
+// over the built-ins — the skill-sets editor writes here so edits survive.
+export function loadSets(reg) {
+  try {
+    const f = join(reg, "sets.custom.json");
+    if (existsSync(f)) {
+      const custom = JSON.parse(readFileSync(f, "utf-8"));
+      if (custom && typeof custom === "object") {
+        return { ...SETS_DATA, ...custom };
+      }
+    }
+  } catch {
+    /* fall through to built-ins */
+  }
+  return SETS_DATA;
+}
+
+// Save a full custom-sets object (only non-built-in names are persisted).
+export function saveCustomSets(reg, custom) {
+  const f = join(reg, "sets.custom.json");
+  writeFileSync(f, JSON.stringify(custom, null, 2) + "\n", "utf-8");
+  return f;
+}
+
 export const VERSION = "1.0.0";
 export const REGISTRY_NAME = ".skill-router";
 export const HOME = homedir();
