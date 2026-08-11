@@ -138,6 +138,18 @@ export async function runInstall(args) {
   const source = skillSourceDir();
   const scope = args.scope === "project" ? "project" : "user";
   const mode = args.mode === "link" ? "link" : "copy";
+  // --dest installs to an explicit path (any directory the user chooses),
+  // bypassing client detection. The skill lands at <dest>/skill-router.
+  if (args.dest) {
+    const dest = join(args.dest, SKILL_NAME);
+    console.log(banner());
+    console.log(`  installing to custom path: ${dest}`);
+    const res = installOne(dest, mode, source, args.force);
+    const ok = res.ok && verify(dest);
+    console.log(`  ${smallLogo()} ${ok ? "ok" : "FAIL"} (${res.mode}) -> ${dest.replace(/\\/g, "/")}`);
+    return ok ? 0 : 1;
+  }
+
   const wanted = args.all
     ? CLIENTS
     : args.agents?.length

@@ -156,6 +156,29 @@ export function inferTags(name, description) {
 
 // ---------------------------------------------------------------- scanning
 
+// Manifest-based detection: build files reveal the language even when the
+// scripts dir holds no source files (Rust Cargo.toml, Go go.mod, ...).
+// Keys are lowercase; lookups normalize the file name before matching,
+// mirroring the LANG_EXT convention in src/data/tags.js.
+const MANIFEST_LANG = {
+  "cargo.toml": "rust",
+  "cargo.lock": "rust",
+  "cargo.toml.example": "rust",
+  "go.mod": "go",
+  "package.json": "javascript",
+  "bun.lock": "javascript",
+  "bun.lockb": "javascript",
+  "pyproject.toml": "python",
+  "requirements.txt": "python",
+  "pom.xml": "java",
+  "build.gradle": "java",
+  "mod.ts": "typescript",
+  "deno.json": "typescript",
+  "composer.json": "php",
+  "gemfile": "ruby",
+  "mix.exs": "elixir",
+};
+
 export function scanSkillDir(skillPath) {
   const md = join(skillPath, "SKILL.md");
   if (!existsSync(md)) return null;
@@ -192,12 +215,23 @@ export function scanSkillDir(skillPath) {
       const full = join(dir, e.name);
       if (e.isDirectory()) walk(full);
       else {
+        const manifestLang = MANIFEST_LANG[e.name.toLowerCase()];
+        if (manifestLang && !languages.includes(manifestLang)) languages.push(manifestLang);
         const lang = LANG_EXT[full.slice(full.lastIndexOf(".")).toLowerCase()];
         if (lang && !languages.includes(lang)) languages.push(lang);
       }
     }
   };
   walk(join(skillPath, "scripts"));
+  // Also check the skill root for manifests (scripts may be absent entirely).
+  try {
+    for (const e of readdirSync(skillPath, { withFileTypes: true })) {
+      const manifestLang = MANIFEST_LANG[e.name.toLowerCase()];
+      if (manifestLang && !languages.includes(manifestLang)) languages.push(manifestLang);
+    }
+  } catch {
+    /* ignore */
+  }
   const issues = [];
   if (name !== (skillPath.split(/[\\/]/).pop() ?? "")) issues.push(`name '${name}' != directory`);
   if (!description) issues.push("missing description");

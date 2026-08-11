@@ -96,6 +96,7 @@ export function parseFlags(argv) {
       case "--project": flags.scope = "project"; break;
       case "--version": case "-v": flags.action = "version"; break;
       case "--help": case "-h": flags.action = "help"; break;
+      case "--dest": { const v = value(++i, a); if (v !== undefined) flags.dest = v; break; }
       case "--repo": { const v = value(++i, a); if (v !== undefined) flags.repo = v; break; }
       case "--init": flags.init = true; break;
       case "--push": flags.push = true; break;

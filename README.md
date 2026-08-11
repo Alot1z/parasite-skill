@@ -36,9 +36,14 @@ bun bin/skill-router.js install -a claude-code,codex,opencode   # specific clien
 bun bin/skill-router.js install --project            # install into ./<client>/skills instead
 bun bin/skill-router.js list                 # show installed instances
 bun bin/skill-router.js remove --yes         # uninstall from detected clients
+bun bin/skill-router.js install --yes --dest <path>   # install to any custom path
+bun bin/skill-router.js install --yes --dest <path> --link   # custom path, symlink mode
 bun bin/skill-router.js mcp add             # auto-register the MCP server in client configs (no manual config)
 bun bin/skill-router.js mcp remove          # remove MCP registration
 ```
+
+`--dest` installs to any directory you choose — not just the known client paths.
+Works with both `--copy` (default) and `--link` (junction/symlink).
 
 The installer detects which clients you have, dedupes shared directories
 (e.g. Cline/Warp/Zed all read `~/.agents/skills`), and verifies `SKILL.md`
@@ -105,6 +110,15 @@ See `docs/RESEARCH.md` for the ecosystem research that shaped this package
 - **IX-inspired graph** — `graph --dot|--mmd` emits a skill-relatedness graph
   (Jaccard over keywords). Self-contained; no upstream code vendored, so
   upstream ix updates can never conflict.
+- **Manifest-based language detection** — the scanner reads `Cargo.toml`,
+  `go.mod`, `package.json`, `pyproject.toml` and more, so a skill with only
+  build manifests is still tagged `rust`/`go`/etc. The skill payload also ships
+  `fast_scan.rs`, a zero-dependency Rust scanner for very large skill trees
+  (pattern from the Rust CLI tools in the starred-repo research).
+- **Scan timing** — `scan` reports elapsed ms (110ms for 84 skills).
+- **Privacy-clean** — the repo contains no usernames, hardcoded home paths,
+  tokens, or emails (verified by an automated scan). All machine paths are
+  resolved at runtime from `os.homedir()`.
 
 ## License
 
