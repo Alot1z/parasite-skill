@@ -24,6 +24,7 @@ from conductor import (  # noqa: E402
     ids,
     best_set,
     cmd_plan,
+    SETS,
 )
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -32,7 +33,7 @@ SERVER_INFO = {"name": "skill-router", "version": "1.0.0"}
 TOOLS = [
     {"name": "scan", "description": "Re-analyze the whole skill ecosystem and rebuild the registry.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "validate", "description": "Check every skill against the Agent Skills spec.", "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "route", "description": "Score every skill against an idea text.", "inputSchema": {"type": "object", "properties": {"idea": {"type": "string"}, "top": {"type": "number"}}, "required": ["idea"]}},
+    {"name": "route", "description": "Score every skill against an idea text.", "inputSchema": {"type": "object", "properties": {"idea": {"type": "string"}, "top": {"type": "number"}, "set": {"type": "string", "description": "optional skill-set name to route within"}}, "required": ["idea"]}},
     {"name": "sets", "description": "List skill-sets or a load order for one set.", "inputSchema": {"type": "object", "properties": {"apply": {"type": "string"}}}},
     {"name": "plan", "description": "Emit a routed execution plan for a request.", "inputSchema": {"type": "object", "properties": {"request": {"type": "string"}}, "required": ["request"]}},
     {"name": "refs", "description": "Generate ref pages for all skills.", "inputSchema": {"type": "object", "properties": {}}},
@@ -74,15 +75,42 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         top = int(params.get("top") or 8)
         payload = load_registry(reg, extra)
         scores = ids(payload, idea)
+        # Merged built-in + custom sets (custom persisted in the JS {desc, members}
+        # shape by sets --new; normalize to the python tuple shape here).
+        sn = params.get("set")
+        sets_map = dict(SETS)
+        custom_f = registry_dir() / "sets.custom.json"
+        if custom_f.exists():
+            try:
+                custom = json.loads(custom_f.read_text())
+                if isinstance(custom, dict):
+                    for k, v in custom.items():
+                        if isinstance(v, dict):
+                            sets_map[k] = (v.get("desc", ""), v.get("members", []))
+                        else:
+                            sets_map[k] = v
+            except Exception:
+                pass
+        if sn:
+            members = sets_map.get(sn, (None, []))[1]
+            if not members:
+                print(f"unknown skill-set: {sn}")
+                return 1
+            scores = {nm: sc for nm, sc in scores.items() if nm in members}
         ranked = sorted(scores.items(), key=lambda kv: -kv[1])[:top]
         print(f'idea: "{idea}"')
+        if sn:
+            print(f"top skills within set '{sn}':")
+            for nm, sc in ranked:
+                print(f"  {sc:7.2f}  {nm}")
+            return 0
         print("top skills:")
         for nm, sc in ranked:
             print(f"  {sc:7.2f}  {nm}")
-        sets = best_set(payload, scores)
+        sets = best_set(payload, scores, sets_map)
         print("best skill-sets:")
-        for sn, sc in sets[:3]:
-            print(f"  {sc:7.2f}  {sn}")
+        for sname, sc in sets[:3]:
+            print(f"  {sc:7.2f}  {sname}")
         return 0
 
     def do_sets():

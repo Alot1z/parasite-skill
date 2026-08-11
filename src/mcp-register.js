@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { banner, smallLogo } from "./logo.js";
 
 const SR = "skill-router";
-const HOME = () => process.env.SKILL_ROUTER_HOME ?? homedir();
+const HOME = () => process.env.SKILL_ROUTER_HOME || homedir();  // || so "" falls back
 
 // Where the MCP server entry point lives (this package's src/mcp-server.js).
 // Works when run from the repo or from an installed copy inside a client dir.

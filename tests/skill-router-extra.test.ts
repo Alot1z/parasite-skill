@@ -9,10 +9,17 @@ import { scan, scoreIdea, parseFrontmatter } from "../src/engine.js";
 
 describe("parseFlags", () => {
   test("parses value flags and bool flags", () => {
-    const f = parseFlags(["route", "--top", "5", "--set", "an idea"]);
+    const f = parseFlags(["route", "--top", "5", "--set", "docs", "an idea"]);
     expect(f._).toEqual(["route", "an idea"]);
     expect(f.top).toBe(5);
+    expect(f.set).toBe("docs");
+  });
+
+  test("bare --set stays a boolean toggle and never swallows a flag", () => {
+    const f = parseFlags(["route", "an idea", "--set", "--top", "3"]);
+    expect(f._).toEqual(["route", "an idea"]);
     expect(f.set).toBe(true);
+    expect(f.top).toBe(3);
   });
 
   test("tolerates a bad --top value (NaN guard)", () => {

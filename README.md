@@ -57,8 +57,10 @@ progress bar, custom logo — no package installs required.
 bun bin/skill-router.js scan                    # re-analyze the ecosystem
 bun bin/skill-router.js validate                # spec-check all skills (exit 1 on issues)
 bun bin/skill-router.js route "write api docs for a new rest endpoint" --set
+bun bin/skill-router.js route "create a new skill" --set skill-authoring   # route within ONE set
 bun bin/skill-router.js plan "build a frontend todo app with auth"
 bun bin/skill-router.js sets --apply thinking   # load order for a skill-set
+SKILL_ROUTER_HOME=/tmp/sandbox skill-router route "idea"   # full env isolation for any command
 bun bin/skill-router.js refs                    # generate ref pages
 bun bin/skill-router.js wikis                   # wiki + graph.dot + graph.mmd
 bun bin/skill-router.js trace session.log       # which skills a session used
@@ -68,6 +70,11 @@ bun bin/skill-router.js link                    # per-skill refs/wiki links (--u
 Scoring is deterministic (tokenized, stemmed, IDF-weighted; rare tokens weigh
 more; name matches get a bonus). It is a ranked *hypothesis* — the skill's
 SKILL.md instructs the agent to re-verify and apply semantic judgment.
+
+`route --set <name>` restricts scoring to one skill-set (custom sets from
+`sets --new` work too — e.g. `--set skill-authoring`), and `SKILL_ROUTER_HOME`
+redirects the registry/installs/MCP for sandboxed runs. The MCP route tool
+accepts the same optional `set` argument.
 
 ## Skill-sets
 

@@ -36,6 +36,7 @@ const TOOLS = [
       properties: {
         idea: { type: "string", description: "the idea / request text to route" },
         top: { type: "number", description: "how many skills to return (default 8)" },
+        set: { type: "string", description: "optional skill-set name to route within (thinking, docs, debug-squad, ...)" },
       },
       required: ["idea"],
     },

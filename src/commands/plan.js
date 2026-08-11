@@ -1,12 +1,17 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SETS, VERSION, loadRegistry, registryDir, scoreIdea } from "../engine.js";
+import { VERSION, loadRegistry, loadSets, registryDir, scoreIdea } from "../engine.js";
 import { fmt } from "./_lib.js";
 
 export function cmdPlan(args) {
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);
-  const { scored, setScores } = scoreIdea(payload, args.request);
+  if (!args.request) {
+    console.error('missing request text: skill-router plan "<request>"');
+    return 1;
+  }
+  const allSets = loadSets(reg);
+  const { scored, setScores } = scoreIdea(payload, args.request, allSets);
   const top = scored.slice(0, 5);
   const best = setScores[0]?.[0] ?? "thinking";
   const slug = (args.request.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40).replace(/^-|-$/g, "")) || "request";
@@ -28,7 +33,7 @@ export function cmdPlan(args) {
     "",
     `### EXECUTE (skill-set: ${best})`,
     "",
-    ...SETS[best].members.map((m) => `- load: ${m}`),
+    ...(allSets[best]?.members ?? []).map((m) => `- load: ${m}`),
     "",
     "### BETWEEN tool calls",
     "- doubt-driven-development before non-trivial decisions",

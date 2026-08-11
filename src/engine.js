@@ -51,17 +51,22 @@ export const STOPWORDS = new Set(
 
 // ---------------------------------------------------------------- paths
 
+// SKILL_ROUTER_HOME is honored across the whole package (installs, sync, MCP,
+// and now the registry) so sandboxed runs and tests stay fully isolated.
+const BASE_HOME = () => process.env.SKILL_ROUTER_HOME || HOME;  // || not ?? so "" falls back
+
 export function registryDir(override) {
-  const d = override ? override : join(HOME, ".agents", "skills", REGISTRY_NAME);
+  const d = override ? override : join(BASE_HOME(), ".agents", "skills", REGISTRY_NAME);
   mkdirSync(d, { recursive: true });
   return d;
 }
 
 export function defaultScanDirs() {
   const dirs = [];
+  const base = BASE_HOME();
   for (const d of [
-    join(HOME, ".agents", "skills"),
-    join(HOME, ".claude", "skills"),
+    join(base, ".agents", "skills"),
+    join(base, ".claude", "skills"),
     join(".agents", "skills"),
     join(".claude", "skills"),
   ]) {
@@ -292,7 +297,7 @@ export function loadRegistry(registry, extraDirs, force) {
 // ---------------------------------------------------------------- scoring
 
 // Public API: returns { scored, setScores } where setScores is an array of [setName, totalScore] for every skill-set (NOT a list of set names).
-export function scoreIdea(payload, idea) {
+export function scoreIdea(payload, idea, sets = SETS) {
   const skills = payload.skills;
   const n = Math.max(skills.length, 1);
   const df = {};
@@ -311,12 +316,12 @@ export function scoreIdea(payload, idea) {
     if (score > 0) scored.push([s.name, Math.round(score * 100) / 100]);
   }
   scored.sort((a, b) => b[1] - a[1]);
-  return { scored, setScores: bestSets(skills, scored) };
+  return { scored, setScores: bestSets(skills, scored, sets ?? SETS) };
 }
 
-export function bestSets(skills, scored) {
+export function bestSets(skills, scored, sets = SETS) {
   const names = new Set(skills.map((s) => s.name));
-  return Object.entries(SETS)
+  return Object.entries(sets)
     .map(([sn, { members }]) => [
       sn,
       Math.round(scored.filter(([nm]) => members.includes(nm) && names.has(nm)).reduce((a, [, sc]) => a + sc, 0) * 100) / 100,

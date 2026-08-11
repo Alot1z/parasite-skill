@@ -98,7 +98,10 @@ MULTIPLICATIVE_PAIRS = [
 # ---------------------------------------------------------------- helpers
 
 def home() -> Path:
-    return Path.home()
+    # SKILL_ROUTER_HOME overrides the home base everywhere (installs, sync, MCP,
+    # registry) so sandboxed runs and tests stay fully isolated.
+    override = os.environ.get("SKILL_ROUTER_HOME")
+    return Path(override) if override else Path.home()
 
 
 def registry_dir(override: str | None = None) -> Path:
@@ -304,10 +307,12 @@ def ids(registry: dict, text: str) -> dict[str, float]:
     return out
 
 
-def best_set(registry: dict, scores: dict[str, float]) -> list[tuple[str, float]]:
+def best_set(registry: dict, scores: dict[str, float], sets: dict | None = None) -> list[tuple[str, float]]:
     names = {s["name"] for s in registry["skills"]}
+    table = sets if sets is not None else SETS
     out: list[tuple[str, float]] = []
-    for set_name, (desc, members) in SETS.items():
+    for set_name, entry in table.items():
+        members = entry[1] if isinstance(entry, tuple) else entry.get("members", [])
         total = sum(scores.get(m, 0.0) for m in members if m in names)
         out.append((set_name, round(total, 2)))
     out.sort(key=lambda x: x[1], reverse=True)

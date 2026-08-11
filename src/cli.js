@@ -77,7 +77,16 @@ export function parseFlags(argv) {
         }
         break;
       }
-      case "--set": flags.set = true; break;
+      case "--set": {
+        // --set [NAME]: bare keeps the legacy boolean toggle (print the
+        // top-scoring set's load order); a name routes the idea within that set.
+        const next = argv[i + 1];
+        if (next !== undefined && !next.startsWith("-")) {
+          flags.set = next;
+          i++;
+        } else flags.set = true;
+        break;
+      }
       case "--apply": { const v = value(++i, a); if (v !== undefined) flags.apply = v; break; }
       case "--new": { const v = value(++i, a); if (v !== undefined) flags.new = v; break; }
       case "--members": { const v = value(++i, a); if (v !== undefined) flags.members = v; break; }

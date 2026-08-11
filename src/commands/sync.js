@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { registryDir, loadRegistry } from "../engine.js";
 import { smallLogo } from "../logo.js";
 
-const SKILLS_HOME = () => join(process.env.SKILL_ROUTER_HOME ?? process.env.HOME ?? process.env.USERPROFILE, ".agents", "skills");
+const SKILLS_HOME = () => join(process.env.SKILL_ROUTER_HOME || process.env.HOME || process.env.USERPROFILE, ".agents", "skills");
 const GIT = () => (process.platform === "win32" ? "git.exe" : "git");
 
 function git(args, cwd) {

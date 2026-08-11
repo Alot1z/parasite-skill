@@ -19,7 +19,7 @@ import { banner, smallLogo } from "./logo.js";
 export const SKILL_NAME = "skill-router";
 
 // Test hook: SKILL_ROUTER_HOME redirects the home base (sandbox installs).
-const homeBase = () => process.env.SKILL_ROUTER_HOME ?? homedir();
+const homeBase = () => process.env.SKILL_ROUTER_HOME || homedir();  // || so "" falls back
 
 const H = homeBase;
 
