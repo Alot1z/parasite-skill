@@ -194,6 +194,79 @@ Use `--agent <ids>` to refresh only specific clients:
 skill-router refresh --agent claude-code,cursor
 ```
 
+## Parasite Extension System
+
+The parasite system enables runtime injection without modifying source code. It creates extension folders for each client and provides build-time hooks, server wrappers, and traceability protection.
+
+### Core Concepts
+
+- **Runtime Injection**: Add enhancements that run at startup without touching original files
+- **Extension Folders**: Each client gets a `.skill-router-extensions/` directory
+- **Build-time Hooks**: Generate Vite/webpack plugins for build-time injection
+- **Server Wrapping**: Wrap upstream servers with enhancement layers
+- **Traceability Protection**: Obfuscate extracted code to prevent tracing
+
+### Commands
+
+```bash
+# Show injection status for all clients
+skill-router parasite --status
+
+# Add a runtime injection
+skill-router parasite --add --agent claude-code --type hook --code "console.log('active')"
+
+# Toggle an injection on/off
+skill-router parasite --toggle injection-1234567890 --enable
+
+# Remove an injection
+skill-router parasite --remove injection-1234567890
+
+# Generate Vite build hook
+skill-router parasite --hook vite --out vite-plugin.js
+
+# Generate webpack build hook
+skill-router parasite --hook webpack --out webpack-plugin.js
+
+# Generate server wrapper
+skill-router parasite --wrap --server ./upstream-server.js --out wrapped-server.js
+
+# Protect code traceability
+skill-router parasite --protect --file input.js --level medium --out protected.js
+```
+
+### Injection Types
+
+| Type | Description |
+|---|---|
+| `pre-init` | Runs before client initialization |
+| `post-init` | Runs after client initialization |
+| `middleware` | Adds HTTP middleware |
+| `hook` | Wraps existing functions |
+
+### Traceability Protection Levels
+
+| Level | Description |
+|---|---|
+| `light` | Remove comments, minify whitespace |
+| `medium` | Rename variables, add dead code |
+| `heavy` | Full obfuscation with control flow flattening |
+
+### How It Works
+
+1. **Extension folders** are created in each client's skills directory
+2. **Injections** are stored as separate files, never modifying originals
+3. **Manifests** track all injections and their state
+4. **Build hooks** generate plugin code for Vite/webpack
+5. **Server wrappers** create enhancement layers around upstream servers
+6. **Traceability protection** obfuscates extracted code
+
+### Data Privacy
+
+- All injections are stored locally
+- No data is shared externally
+- Extensions are toggleable and removable
+- Original source code is never modified
+
 ## The AI Layer (Your Judgment)
 
 The deterministic scorer is keyword/IDF-based. It cannot read intent. After `--route` output:

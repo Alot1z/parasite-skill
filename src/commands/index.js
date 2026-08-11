@@ -11,3 +11,4 @@ export { cmdBundle } from "./bundle.js";
 export { cmdSync } from "./sync.js";
 export { cmdAgents } from "./sync.js";
 export { cmdGraph } from "./graph.js";
+export { cmdParasite } from "./parasite.js";

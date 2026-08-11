@@ -20,6 +20,8 @@ COMMANDS
              --yes, --force)
   refresh   Update all installed copies with the latest SKILL.md
             (--all | --agent <ids>, --copy | --link)
+  parasite  Manage runtime extensions without modifying source
+            (--status, --add, --remove, --toggle, --hook, --wrap, --protect)
   list      Show installed skill-router instances per client
   remove    Remove installed instances (--agent <ids>)
   scan      Re-analyze the whole skill ecosystem, rebuild registry
@@ -45,6 +47,15 @@ GLOBAL FLAGS
   --dirs a,b       Extra scan dirs
   --force          Force rescan / fresh load / replace existing installs
   --json           Machine-readable output
+
+PARASITE FLAGS
+  --status         Show injection status for all clients
+  --add            Add a runtime injection (--agent, --type, --code, --target)
+  --remove ID      Remove an injection by ID
+  --toggle ID      Toggle an injection on/off
+  --hook FORMAT    Generate build hook (vite | webpack)
+  --wrap PATH      Generate server wrapper for upstream
+  --protect        Protect code traceability (--level light|medium|heavy)
 
 CLIENTS
   ${CLIENTS.map((c) => c.id).join(", ")}
@@ -124,6 +135,22 @@ export function parseFlags(argv) {
         if (v !== undefined) flags.agents.push(...v.split(",").map((x) => x.trim()).filter(Boolean));
         break;
       }
+      case "--status": flags.status = true; break;
+      case "--add": { const v = value(++i, a); if (v !== undefined) flags.add = v; break; }
+      case "--toggle": { const v = value(++i, a); if (v !== undefined) flags.toggle = v; break; }
+      case "--enable": flags.enable = true; break;
+      case "--disable": flags.enable = false; break;
+      case "--hook": { const v = value(++i, a); if (v !== undefined) flags.hook = v; break; }
+      case "--wrap": { const v = value(++i, a); if (v !== undefined) flags.wrap = v; break; }
+      case "--protect": flags.protect = true; break;
+      case "--type": { const v = value(++i, a); if (v !== undefined) flags.type = v; break; }
+      case "--target": { const v = value(++i, a); if (v !== undefined) flags.target = v; break; }
+      case "--position": { const v = value(++i, a); if (v !== undefined) flags.position = v; break; }
+      case "--code": { const v = value(++i, a); if (v !== undefined) flags.code = v; break; }
+      case "--file": { const v = value(++i, a); if (v !== undefined) flags.file = v; break; }
+      case "--level": { const v = value(++i, a); if (v !== undefined) flags.level = v; break; }
+      case "--format": { const v = value(++i, a); if (v !== undefined) flags.format = v; break; }
+      case "--server": { const v = value(++i, a); if (v !== undefined) flags.server = v; break; }
       default:
         if (a.startsWith("-")) {
           console.error(`unknown flag: ${a}`);
@@ -167,6 +194,7 @@ export async function run(argv) {
   switch (cmd) {
     case "install": return await runInstall(ctx);
     case "refresh": return await runRefresh(ctx);
+    case "parasite": return commands.cmdParasite(ctx);
     case "list": return runList();
     case "remove": return runRemove(ctx);
     case "scan": return commands.cmdScan(ctx);
