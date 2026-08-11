@@ -85,3 +85,28 @@ jobs:
             echo "sync --status unexpectedly succeeded without a repo"
             exit 1
           fi
+      - name: Scheduled auto-gc gate (doctor sweeps under an auto policy)
+        shell: bash
+        env:
+          PARASITE_SKILL_HOME: "${{ runner.temp }}/ps-gc-home"
+        run: |
+          set -euo pipefail
+          mkdir -p "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill/agents"
+          printf '%s\n' '{ "gc": { "ageDays": 30, "keep": 20, "auto": true, "intervalDays": 30 } }' > "$PARASITE_SKILL_HOME/parasite-skill.json"
+          # Seed a stale agent report (2020) under the auto policy. `doctor`
+          # must sweep it itself: sweep note on stderr, artifact gone, exit 0.
+          echo '{"kind":"parasite-skill-agent-run"}' > "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill/agents/stale-report.json"
+          touch -d "2020-01-01" "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill/agents/stale-report.json"
+          cd "$PARASITE_SKILL_HOME"
+          out="$(node "$GITHUB_WORKSPACE/bin/parasite-skill.js" doctor 2>&1 >/dev/null || true)"
+          echo "$out" | grep -q "auto-gc: pruned"
+          test ! -f .agents/skills/.parasite-skill/agents/stale-report.json
+          # Inside the 30d interval the runner must stay quiet: a fresh stale
+          # artifact survives, the skip note appears on stderr, and doctor
+          # still exits 0 (throttled is not a missed TTL sweep).
+          echo '{"kind":"parasite-skill-agent-run"}' > .agents/skills/.parasite-skill/agents/stale-report.json
+          touch -d "2020-01-01" .agents/skills/.parasite-skill/agents/stale-report.json
+          out="$(node "$GITHUB_WORKSPACE/bin/parasite-skill.js" doctor 2>&1 >/dev/null || true)"
+          echo "$out" | grep -q "auto-gc: skipped"
+          test -f .agents/skills/.parasite-skill/agents/stale-report.json
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" doctor --json >/dev/null

@@ -513,6 +513,43 @@ def runtime_options() -> dict:
     return {"enabled_sets": None, "exclude_skills": None}
 
 
+def project_gc() -> dict | None:
+    """Read the project gc TTL policy from the nearest project config.
+
+    Mirrors the JS engine's mergeConfig gc block: validates types and returns
+    a sanitized { ageDays, keep, auto, intervalDays } dict (or None when the
+    config has no usable gc block). Used by the Python twin's scheduled
+    auto-gc runner and its doctor posture check.
+    """
+    cur = Path.cwd()
+    for _ in range(64):
+        for name in ("parasite-skill.json", ".parasite-skill.json"):
+            f = cur / name
+            if f.exists():
+                try:
+                    cfg = json.loads(f.read_text(encoding="utf-8"))
+                except Exception:
+                    return None
+                raw = cfg.get("gc") if isinstance(cfg, dict) else None
+                if not isinstance(raw, dict):
+                    return None
+                out: dict = {}
+                if isinstance(raw.get("ageDays"), (int, float)) and not isinstance(raw.get("ageDays"), bool) and raw.get("ageDays") >= 0:
+                    out["ageDays"] = raw["ageDays"]
+                if isinstance(raw.get("keep"), (int, float)) and not isinstance(raw.get("keep"), bool) and raw.get("keep") >= 0:
+                    out["keep"] = raw["keep"]
+                if isinstance(raw.get("auto"), bool):
+                    out["auto"] = raw["auto"]
+                if isinstance(raw.get("intervalDays"), (int, float)) and not isinstance(raw.get("intervalDays"), bool) and raw.get("intervalDays") >= 0:
+                    out["intervalDays"] = raw["intervalDays"]
+                return out or None
+        nxt = cur.parent
+        if nxt == cur:
+            break
+        cur = nxt
+    return None
+
+
 def runtime_sets(registry: Path) -> dict:
     table = dict(SETS)
     custom_file = registry / "sets.custom.json"

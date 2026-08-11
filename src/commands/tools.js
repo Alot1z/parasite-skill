@@ -106,13 +106,24 @@ export function planGc(reg, { ageDays, keep, dryRun = false } = {}) {
 }
 
 /**
+ * Timestamped marker file (in the registry dir, shared with the Python twin)
+ * that throttles the automatic sweep: `intervalDays` in the gc policy limits
+ * the sweep to at most once per N days, so scan/export/doctor stay cheap on
+ * busy machines. Written after every executed sweep, read before each one.
+ */
+export const AUTO_GC_MARKER = "auto-gc.last.json";
+
+/**
  * Scheduled GC runner: when the project gc TTL policy declares `auto: true`,
  * apply the sweep right now so stale registry artifacts never accumulate
  * between manual `tools gc` runs. Best-effort: prints a one-line note to
  * stderr (stdout JSON stays machine-clean), never throws, and never changes
  * the host command's exit code. Wired into the scan/export/doctor entry
- * points. Returns { ran, pruned } after a sweep, { ran: false, pruned } when
- * the policy is on but nothing was stale, or null when it is off/absent.
+ * points. When the policy sets `intervalDays`, the sweep runs at most once
+ * per interval — a fresh marker skips the sweep entirely. Returns
+ * { ran, pruned, throttled } after a sweep, { ran: false, pruned, throttled }
+ * when the policy is on but nothing was stale, { ran: false, throttled: true }
+ * when throttled by the interval, or null when it is off/absent.
  */
 export function runAutoGc(reg, args = {}) {
   try {
@@ -123,15 +134,42 @@ export function runAutoGc(reg, args = {}) {
     const byAge = Number.isFinite(effective.ageDays) && effective.ageDays >= 0;
     const byKeep = Number.isFinite(effective.keep) && effective.keep >= 0;
     if (!byAge && !byKeep) return null;
+    const now = Date.now();
+    const dayMs = 86_400_000;
+    // intervalDays throttles the automatic sweep. 0 or unset means "always
+    // sweep" (backward compatible); N > 0 means at most once per N days.
+    const interval =
+      Number.isFinite(effective.intervalDays) && effective.intervalDays >= 0 ? effective.intervalDays : null;
+    if (interval !== null) {
+      const markerPath = join(reg, AUTO_GC_MARKER);
+      let lastRunMs = 0;
+      try {
+        lastRunMs = Number(JSON.parse(readFileSync(markerPath, "utf-8")).lastRunMs) || 0;
+      } catch {
+        lastRunMs = 0;
+      }
+      if (lastRunMs > 0 && now - lastRunMs < interval * dayMs) {
+        const daysAgo = Math.max(0, Math.floor((now - lastRunMs) / dayMs));
+        console.error(`auto-gc: skipped (last sweep ${daysAgo}d ago; interval ${interval}d)`);
+        return { ran: false, pruned: null, throttled: true };
+      }
+    }
     // A single non-dry call is enough: planGc is already a no-op when nothing
     // is stale (agent files are only removed when listed, the ledger is only
     // rewritten when entries are dropped), so no dry-run pre-pass is needed.
     const applied = planGc(reg, { ageDays: effective.ageDays, keep: effective.keep, dryRun: false });
-    if (!applied.totals.agent_files && !applied.totals.ledger_entries) return { ran: false, pruned: applied.totals };
+    // Record the sweep regardless of how much it pruned: an executed sweep is
+    // the throttle reset point, so busy machines stop re-listing the registry.
+    try {
+      writeFileSync(join(reg, AUTO_GC_MARKER), JSON.stringify({ lastRunMs: now }) + "\n", "utf-8");
+    } catch {
+      // marker is best-effort; a read-only registry still sweeps each time
+    }
+    if (!applied.totals.agent_files && !applied.totals.ledger_entries) return { ran: false, pruned: applied.totals, throttled: false };
     console.error(
       `auto-gc: pruned ${applied.totals.agent_files} agent report(s), ${applied.totals.ledger_entries} ledger entry(ies) under the project gc policy (auto: true)`,
     );
-    return { ran: true, pruned: applied.totals };
+    return { ran: true, pruned: applied.totals, throttled: false };
   } catch (err) {
     console.error(`auto-gc skipped: ${String(err.message ?? err)}`);
     return null;

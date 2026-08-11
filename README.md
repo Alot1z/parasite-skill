@@ -102,10 +102,15 @@ cleanup can be expressed in config instead of remembering flags. When the
 policy declares `"auto": true` (safe to run unattended), the sweep also runs
 automatically at the `scan`, `export`, and `doctor` entry points — stale
 artifacts are pruned on the spot, so they never accumulate between manual
-runs. `doctor` reports the policy posture as a check — and because it
-self-heals first, stale artifacts remaining *after* the auto sweep are a
-*failing* doctor check, so CI catches a genuinely stuck TTL sweep. `export`
-records the policy and the stale-artifact dry-run count in `ecosystem.json`.
+runs. Add `"intervalDays": N` to throttle the automatic sweep to at most once
+per N days (a timestamped `auto-gc.last.json` marker in the registry, shared
+by both the JS and Python twins), so busy machines don't re-sweep on every
+scan/export/doctor; a throttled sweep is reported on stderr as `auto-gc:
+skipped` and never fails `doctor`. `doctor` reports the policy posture as a
+check — and because it self-heals first, stale artifacts remaining *after* the
+auto sweep are a *failing* doctor check, so CI catches a genuinely stuck TTL
+sweep. `export` records the policy (including `intervalDays`) and the
+stale-artifact dry-run count in `ecosystem.json`.
 
 `tools verify` checks every discovered tool (script exists, policy status,
 schema shape) and exits 1 when anything is broken — a cheap readiness gate

@@ -1998,10 +1998,12 @@ describe("gc TTL policy, sync posture, risk layers", () => {
     const out: string[] = [];
     console.log = (...a) => out.push(a.join(" "));
     try {
-      expect(cmdExport({ registry, dirs, gc: { ageDays: 30, keep: 20 }, json: true })).toBe(0);
+      expect(cmdExport({ registry, dirs, gc: { ageDays: 30, keep: 20, auto: true, intervalDays: 5 }, json: true })).toBe(0);
       const parsed = JSON.parse(out.join("\n"));
       expect(parsed.kind).toBe("parasite-skill-ecosystem");
       expect(parsed.gc.age_days).toBe(30);
+      expect(parsed.gc.interval_days).toBe(5);
+      expect(parsed.gc.auto).toBe(true);
       expect(parsed.gc.stale.agent_files).toBe(0);
       expect(parsed.sync.repo).toBe(false);
       // The saved file carries the same posture.
@@ -2211,5 +2213,131 @@ describe("scheduled auto-gc runner", () => {
     } finally {
       console.log = orig;
     }
+  });
+
+  test("auto-gc honors gc-intervalDays: sweeps once, then throttles within the interval", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const { agentsDir } = seedStale(registry, dirs);
+    const origErr = console.error;
+    const errOut: string[] = [];
+    console.error = (...a) => errOut.push(a.join(" "));
+    try {
+      // First call: no marker yet -> the sweep runs and writes the marker.
+      expect(cmdScan({ registry, dirs, gc: { ageDays: 30, auto: true, intervalDays: 5 } })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(false);
+      expect(existsSync(join(registry, "auto-gc.last.json"))).toBe(true);
+      expect(errOut.join("\n")).toContain("auto-gc: pruned");
+      const markerBefore = readFileSync(join(registry, "auto-gc.last.json"), "utf-8");
+      // A new stale report inside the 5-day interval must be left alone.
+      writeFileSync(join(agentsDir, "stale-report.json"), JSON.stringify({ kind: "x" }));
+      utimesSync(join(agentsDir, "stale-report.json"), new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
+      expect(cmdScan({ registry, dirs, gc: { ageDays: 30, auto: true, intervalDays: 5 } })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(true);
+      expect(readFileSync(join(registry, "auto-gc.last.json"), "utf-8")).toBe(markerBefore);
+      expect(errOut.join("\n")).toContain("auto-gc: skipped");
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  test("auto-gc re-sweeps when the interval marker is stale", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const { agentsDir } = seedStale(registry, dirs);
+    // A marker from 2020 is long past the 5-day interval.
+    writeFileSync(join(registry, "auto-gc.last.json"), JSON.stringify({ lastRunMs: 1 }));
+    const origErr = console.error;
+    const errOut: string[] = [];
+    console.error = (...a) => errOut.push(a.join(" "));
+    try {
+      expect(cmdScan({ registry, dirs, gc: { ageDays: 30, auto: true, intervalDays: 5 } })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(false);
+      expect(errOut.join("\n")).toContain("auto-gc: pruned");
+      // The marker was refreshed to now.
+      const marker = JSON.parse(readFileSync(join(registry, "auto-gc.last.json"), "utf-8"));
+      expect(marker.lastRunMs).toBeGreaterThan(1);
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  test("doctor does not fail while the auto sweep is interval-throttled", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const { agentsDir } = seedStale(registry, dirs);
+    // A fresh marker puts the runner inside the 5-day interval: doctor must
+    // not fail on the stale artifact it is legitimately waiting to sweep.
+    writeFileSync(join(registry, "auto-gc.last.json"), JSON.stringify({ lastRunMs: Date.now() }));
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdDoctor({ registry, dirs, gc: { ageDays: 30, auto: true, intervalDays: 5 } })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(true);
+      expect(out.join("\n")).toContain("[ok] gc — 1 stale artifact(s) under the auto gc policy (auto sweep throttled to once per 5d)");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("mergeConfig parses gc.intervalDays from the project config", () => {
+    const merged = mergeConfig({ gc: { ageDays: 30, keep: 20, auto: true, intervalDays: 5 } }, {});
+    expect(merged.gc).toEqual({ ageDays: 30, keep: 20, auto: true, intervalDays: 5 });
+    // Invalid intervalDays (negative) is dropped; the rest of the policy stays.
+    const dropped = mergeConfig({ gc: { ageDays: 30, intervalDays: -1 } }, {});
+    expect(dropped.gc).toEqual({ ageDays: 30 });
+  });
+
+  test("python twin auto-gc sweeps on scan/doctor and throttles within the interval", () => {
+    const base = join(tmpdir(), `sr-py-gc-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const skillDir = join(base, ".agents", "skills", "demo-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(join(regDir, "agents"), { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n");
+    writeFileSync(join(skillDir, "scripts", "hello.py"), 'print("hi")\n');
+    writeFileSync(join(base, "parasite-skill.json"), JSON.stringify({ gc: { ageDays: 30, auto: true, intervalDays: 5 } }));
+    const pyCode = [
+      "import json, os, sys, time",
+      "from pathlib import Path",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(join(process.cwd(), "skill", "scripts")) + ")",
+      "import mcp_server",
+      // scan writes the registry and (with the auto policy) the sweep marker.
+      "mcp_server.run_tool('scan', {})",
+      "agents = Path(" + JSON.stringify(regDir) + ") / 'agents'",
+      "regp = Path(" + JSON.stringify(regDir) + ")",
+      "old = time.time() - 200 * 86400",
+      // seed a stale report and age the marker so the next sweep actually runs.
+      "(agents / 'stale-report.json').write_text('{}')",
+      "os.utime(agents / 'stale-report.json', (old, old))",
+      "regp.joinpath('auto-gc.last.json').write_text(json.dumps({'lastRunMs': 1}))",
+      "text, code = mcp_server.run_tool('doctor', {})",
+      "checks = json.loads(text)['checks']",
+      "gc1 = [c['detail'] for c in checks if c['check'] == 'gc'][0]",
+      "print(' '.join([str(code), str(not (agents / 'stale-report.json').exists()), gc1]))",
+      // within the 5-day interval the sweep must be throttled and doctor stays green.
+      "(agents / 'stale-report.json').write_text('{}')",
+      "os.utime(agents / 'stale-report.json', (old, old))",
+      "text2, code2 = mcp_server.run_tool('doctor', {})",
+      "checks2 = json.loads(text2)['checks']",
+      "gc2 = [c['detail'] for c in checks2 if c['check'] == 'gc'][0]",
+      "print(' '.join([str(code2), str((agents / 'stale-report.json').exists()), gc2]))",
+    ].join("; ");
+    const lines = execFileSync(PY, ["-c", pyCode], { encoding: "utf8", cwd: base }).trim().split("\n");
+    // First doctor: swept the stale report (file gone), gc check reports clean.
+    expect(lines[0]).toContain("0 True");
+    expect(lines[0]).toContain("no stale artifacts under the gc policy");
+    // Second doctor: interval-throttled (file stays) but still exit 0.
+    expect(lines[1]).toContain("0 True");
+    expect(lines[1]).toContain("auto sweep throttled to once per 5d");
   });
 });

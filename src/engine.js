@@ -823,19 +823,23 @@ export function mergeConfig(projectConfig, cliFlags) {
   }
 
   // Project GC TTL policy: prune stale registry artifacts on `tools gc` when
-  // CLI flags are absent. { ageDays?: number, keep?: number, auto?: boolean }.
-  // `ageDays` prunes artifacts older than N days; `keep` retains only the N
-  // newest; `auto` marks the policy as safe to run unattended (CI/doctor).
+  // CLI flags are absent. { ageDays?: number, keep?: number, auto?: boolean,
+  // intervalDays?: number }. `ageDays` prunes artifacts older than N days;
+  // `keep` retains only the N newest; `auto` marks the policy as safe to run
+  // unattended (CI/doctor); `intervalDays` throttles the automatic sweep to at
+  // most once per N days (timestamped marker in the registry), so busy machines
+  // stay cheap. `intervalDays: 0` (or unset) sweeps on every entry point.
   if (projectConfig.gc !== undefined && projectConfig.gc !== null) {
     if (typeof projectConfig.gc === "object" && !Array.isArray(projectConfig.gc)) {
       const gc = {};
       if (typeof projectConfig.gc.ageDays === "number" && projectConfig.gc.ageDays >= 0) gc.ageDays = projectConfig.gc.ageDays;
       if (typeof projectConfig.gc.keep === "number" && projectConfig.gc.keep >= 0) gc.keep = projectConfig.gc.keep;
       if (typeof projectConfig.gc.auto === "boolean") gc.auto = projectConfig.gc.auto;
+      if (typeof projectConfig.gc.intervalDays === "number" && projectConfig.gc.intervalDays >= 0) gc.intervalDays = projectConfig.gc.intervalDays;
       if (Object.keys(gc).length) merged.gc = gc;
-      else console.error("Warning: 'gc' in parasite-skill.json has no valid ageDays/keep/auto values");
+      else console.error("Warning: 'gc' in parasite-skill.json has no valid ageDays/keep/auto/intervalDays values");
     } else {
-      console.error("Warning: invalid 'gc' in parasite-skill.json (expected object with ageDays/keep/auto)");
+      console.error("Warning: invalid 'gc' in parasite-skill.json (expected object with ageDays/keep/auto/intervalDays)");
     }
   }
 

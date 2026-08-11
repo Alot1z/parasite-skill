@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,6 +36,7 @@ from conductor import (  # noqa: E402
     SETS,
     project_sets,
     runtime_sets,
+    project_gc,
 )
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -153,6 +155,132 @@ RISK_PATTERNS = [
 
 
 
+# --------------------------------------------------------------------------
+# Scheduled auto-gc runner (parity with the JS twin's runAutoGc): when the
+# project gc TTL policy declares `auto: true`, the sweep is applied on the
+# spot at the scan/export/doctor entry points. `intervalDays` throttles it to
+# at most once per N days via a timestamped marker shared with the JS twin.
+# Best-effort: notes go to stderr (stdout JSON stays machine-clean) and these
+# functions never raise.
+
+AUTO_GC_MARKER = "auto-gc.last.json"
+_DAY_MS = 86_400_000
+
+
+def _plan_gc(reg: Path, age_days=None, keep=None, dry_run: bool = False) -> dict:
+    """Mirror of the JS planGc: prune stale agent report files (by mtime) and
+    audit-ledger entries (by timestamp). Returns { removed, totals } and is
+    side-effect-free when dry_run is True."""
+    by_age = isinstance(age_days, (int, float)) and not isinstance(age_days, bool) and age_days >= 0
+    by_keep = isinstance(keep, (int, float)) and not isinstance(keep, bool) and keep >= 0
+    now_ms = time.time() * 1000
+    removed = {"agent_files": [], "ledger_entries": 0, "ledger_bytes": 0}
+    agents_dir = reg / "agents"
+    report_files = []
+    if agents_dir.is_dir():
+        for name in sorted(os.listdir(agents_dir)):
+            if not (name.endswith(".md") or name.endswith(".json")):
+                continue
+            full = agents_dir / name
+            try:
+                mtime_ms = full.stat().st_mtime * 1000
+            except OSError:
+                continue
+            report_files.append({"name": name, "full": full, "mtimeMs": mtime_ms})
+    survivors = report_files
+    if by_age:
+        survivors = [f for f in survivors if now_ms - f["mtimeMs"] <= age_days * _DAY_MS]
+    if by_keep:
+        survivors = sorted(survivors, key=lambda f: -f["mtimeMs"])[: int(keep)]
+    survivor_set = {f["full"] for f in survivors}
+    for f in report_files:
+        if f["full"] not in survivor_set:
+            removed["agent_files"].append(f["name"])
+            if not dry_run:
+                try:
+                    f["full"].unlink()
+                except OSError:
+                    pass
+    ledger_path = reg / "tool-runs.jsonl"
+    if ledger_path.exists():
+        try:
+            lines = [ln for ln in ledger_path.read_text(encoding="utf-8", errors="replace").split("\n") if ln]
+        except OSError:
+            lines = []
+        parsed = []
+        for index, line in enumerate(lines):
+            ts = 0
+            try:
+                raw_ts = json.loads(line).get("ts")
+                if isinstance(raw_ts, str) and raw_ts:
+                    ts = int(datetime.fromisoformat(raw_ts.replace("Z", "+00:00")).timestamp() * 1000)
+                elif isinstance(raw_ts, (int, float)):
+                    ts = int(raw_ts)
+            except Exception:
+                ts = 0
+            parsed.append({"index": index, "ts": ts})
+        kept = parsed
+        if by_age:
+            kept = [e for e in kept if now_ms - e["ts"] <= age_days * _DAY_MS]
+        if by_keep:
+            kept = kept[-int(keep):]
+        kept_idx = {e["index"] for e in kept}
+        dropped = [i for i in range(len(lines)) if i not in kept_idx]
+        removed["ledger_entries"] = len(dropped)
+        removed["ledger_bytes"] = sum(len(lines[i].encode("utf-8")) + 1 for i in dropped)
+        if dropped and not dry_run:
+            try:
+                remaining = "\n".join(lines[i] for i in range(len(lines)) if i in kept_idx)
+                ledger_path.write_text(remaining + ("\n" if kept_idx else ""), encoding="utf-8")
+            except OSError:
+                pass
+    return {"removed": removed, "totals": {"agent_files": len(removed["agent_files"]), "ledger_entries": removed["ledger_entries"]}}
+
+
+def _run_auto_gc(reg: Path) -> dict | None:
+    """Mirror of the JS runAutoGc. Returns { ran, pruned, throttled } after a
+    sweep, { ran: False, pruned, throttled: False } when nothing was stale,
+    { ran: False, throttled: True } when the interval throttled the sweep, or
+    None when the policy is off/absent. Never raises; notes go to stderr."""
+    try:
+        policy = project_gc()
+        if not policy or policy.get("auto") is not True:
+            return None
+        by_age = isinstance(policy.get("ageDays"), (int, float)) and not isinstance(policy.get("ageDays"), bool) and policy.get("ageDays") >= 0
+        by_keep = isinstance(policy.get("keep"), (int, float)) and not isinstance(policy.get("keep"), bool) and policy.get("keep") >= 0
+        if not by_age and not by_keep:
+            return None
+        now_ms = time.time() * 1000
+        interval = policy.get("intervalDays")
+        interval = interval if isinstance(interval, (int, float)) and not isinstance(interval, bool) and interval >= 0 else None
+        marker_path = reg / AUTO_GC_MARKER
+        if interval is not None:
+            last_run_ms = 0
+            try:
+                last_run_ms = int(json.loads(marker_path.read_text(encoding="utf-8")).get("lastRunMs", 0)) or 0
+            except Exception:
+                last_run_ms = 0
+            if last_run_ms > 0 and now_ms - last_run_ms < interval * _DAY_MS:
+                days_ago = max(0, int((now_ms - last_run_ms) // _DAY_MS))
+                print(f"auto-gc: skipped (last sweep {days_ago}d ago; interval {interval}d)", file=sys.stderr)
+                return {"ran": False, "pruned": None, "throttled": True}
+        applied = _plan_gc(reg, policy.get("ageDays"), policy.get("keep"), dry_run=False)
+        try:
+            marker_path.write_text(json.dumps({"lastRunMs": int(now_ms)}) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+        if not applied["totals"]["agent_files"] and not applied["totals"]["ledger_entries"]:
+            return {"ran": False, "pruned": applied["totals"], "throttled": False}
+        print(
+            f"auto-gc: pruned {applied['totals']['agent_files']} agent report(s), {applied['totals']['ledger_entries']} ledger entry(ies) under the project gc policy (auto: true)",
+            file=sys.stderr,
+        )
+        return {"ran": True, "pruned": applied["totals"], "throttled": False}
+    except Exception as err:  # noqa: BLE001
+        print(f"auto-gc skipped: {err}", file=sys.stderr)
+        return None
+
+
 def _tool_name(skill_name: str, path: str) -> str:
     """Mirror the JS twin's toolNameFor: <skill>__<base> lowercased/sanitized."""
     base = path.split("/")[-1].rsplit(".", 1)[0]
@@ -253,6 +381,9 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
 
     def do_scan():
         payload = scan(extra, reg, force=True)
+        # Scheduled GC: honor the project gc TTL policy (auto: true) so stale
+        # registry artifacts never accumulate across scans (JS twin parity).
+        _run_auto_gc(reg)
         return 0
 
     def do_validate():
@@ -413,6 +544,9 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
             **({"public": True} if is_public else {}),
             "note": "python-twin export: registry-derived inventory; JS-only client/extension/MCP/rules state is served by the JS twin",
         }
+        # Scheduled GC: honor the project gc TTL policy (auto: true) so the
+        # export leaves the registry tidy, not just reports on its staleness.
+        _run_auto_gc(reg)
         print(json.dumps(eco, indent=2))
         return 0
 
@@ -645,6 +779,33 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
                 if ext in runnable:
                     count += 1
         ok("tools", f"{count} callable tool(s) discovered")
+
+        # 4. Scheduled GC self-heals first, then the gc posture check mirrors
+        # the JS twin: stale artifacts under an auto policy are a failing check
+        # unless the interval throttled the sweep (the runner is intentionally
+        # waiting for the next interval — not a missed TTL sweep).
+        auto = _run_auto_gc(reg)
+        policy = project_gc()
+        has_knob = bool(policy) and (
+            (isinstance(policy.get("ageDays"), (int, float)) and not isinstance(policy.get("ageDays"), bool) and policy.get("ageDays") >= 0)
+            or (isinstance(policy.get("keep"), (int, float)) and not isinstance(policy.get("keep"), bool) and policy.get("keep") >= 0)
+        )
+        if has_knob:
+            plan = _plan_gc(reg, policy.get("ageDays"), policy.get("keep"), dry_run=True)
+            stale = plan["totals"]["agent_files"] + plan["totals"]["ledger_entries"]
+            throttled = bool(auto and auto.get("throttled"))
+            age_display = policy.get("ageDays") if policy.get("ageDays") is not None else "-"
+            keep_display = policy.get("keep") if policy.get("keep") is not None else "-"
+            if policy.get("auto") is True and stale and not throttled:
+                fail("gc", f"{stale} stale artifact(s) under the auto gc policy; run tools gc to clear")
+            elif policy.get("auto") is True and stale and throttled:
+                ok("gc", f"{stale} stale artifact(s) under the auto gc policy (auto sweep throttled to once per {policy.get('intervalDays')}d)")
+            elif stale:
+                ok("gc", f"{stale} stale artifact(s) under the gc policy (age {age_display}d, keep {keep_display}); run tools gc")
+            else:
+                ok("gc", "no stale artifacts under the gc policy")
+        else:
+            ok("gc", "no gc TTL policy configured (parasite-skill.json \"gc\": { \"ageDays\": N, \"keep\": N })")
 
         print(json.dumps({"ok": failed == 0, "failed": failed, "checks": out}, indent=2))
         return 0 if failed == 0 else 1

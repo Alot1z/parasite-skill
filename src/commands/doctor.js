@@ -81,18 +81,24 @@ export function cmdDoctor(args = {}) {
   // 5. Scheduled GC: when the project policy declares `auto: true`, apply the
   // sweep right now so the posture check below sees post-gc state — doctor
   // self-heals instead of failing on artifacts the runner could have cleared.
-  runAutoGc(reg, args);
+  // The return tells step 6 whether the interval throttled the sweep.
+  const autoGc = runAutoGc(reg, args);
 
   // 6. Project GC TTL posture: when a gc policy exists, dry-run it and report
   // how many stale artifacts a prune would remove. Informational unless the
   // policy declares `auto: true` (safe to run unattended) — then stale
   // artifacts mean the scheduled cleanup has not happened, which is a failing
-  // check so CI catches a missed TTL sweep.
-  const gcPolicy = args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : null;
+  // check so CI catches a missed TTL sweep. An interval-throttled sweep is not
+  // a failure: the runner is intentionally waiting for the next interval.
+  const gcPolicy =
+    args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : project?.gc ?? null;
   if (gcPolicy && (Number.isFinite(gcPolicy.ageDays) || Number.isFinite(gcPolicy.keep))) {
     const { totals } = planGc(reg, { ageDays: gcPolicy.ageDays, keep: gcPolicy.keep, dryRun: true });
     const stale = totals.agent_files + totals.ledger_entries;
-    if (gcPolicy.auto === true && stale) fail("gc", `${stale} stale artifact(s) under the auto gc policy; run tools gc to clear`);
+    const throttled = !!autoGc?.throttled;
+    if (gcPolicy.auto === true && stale && !throttled) fail("gc", `${stale} stale artifact(s) under the auto gc policy; run tools gc to clear`);
+    else if (gcPolicy.auto === true && stale && throttled)
+      ok("gc", `${stale} stale artifact(s) under the auto gc policy (auto sweep throttled to once per ${gcPolicy.intervalDays}d)`);
     else ok("gc", stale ? `${stale} stale artifact(s) under the gc policy (age ${gcPolicy.ageDays ?? "-"}d, keep ${gcPolicy.keep ?? "-"}); run tools gc` : "no stale artifacts under the gc policy");
   } else {
     ok("gc", "no gc TTL policy configured (parasite-skill.json \"gc\": { \"ageDays\": N, \"keep\": N })");
