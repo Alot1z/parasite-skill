@@ -1,20 +1,25 @@
 {
-  "name": "skill-router",
+  "name": "parasite-skill",
   "version": "1.0.0",
-  "description": "Route any request to the right agent skills: scans the whole skill ecosystem, validates against the Agent Skills spec, routes ideas to skills and skill-sets, generates refs/wikis, and installs the skill-router skill into any AI client (Claude Code, Codex, OpenCode, and more) via copy or symlink.",
+  "description": "Parasite skill system: enhances any AI client without modifying source code. Routes requests to the right agent skills, validates against the Agent Skills spec, and provides runtime injection, build-time hooks, and server wrapping capabilities.",
   "type": "module",
   "license": "MIT",
   "keywords": [
     "agent-skills",
     "skills",
+    "parasite-skill",
     "skill-router",
     "claude-code",
     "codex",
     "opencode",
     "mcp",
-    "cli"
+    "cli",
+    "runtime-injection",
+    "build-hooks",
+    "server-wrapping"
   ],
   "bin": {
+    "parasite-skill": "bin/skill-router.js",
     "skill-router": "bin/skill-router.js"
   },
   "files": [

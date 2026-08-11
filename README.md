@@ -1,132 +1,383 @@
-# skill-router
+# 🦠 Parasite Skill
 
-Route any request to the right agent skills. One package, every AI client.
+**Enhance without modifying.** A runtime injection system for AI clients.
 
-`skill-router` scans the whole skill ecosystem (user + Claude Code + project scopes),
-validates every skill against the official [Agent Skills spec](https://agentskills.io/specification),
-routes an idea text to the best skills and skill-sets (IDF-weighted keyword scoring +
-an agent judgment layer), generates refs/wikis, and installs the `skill-router`
-skill itself into any AI coding client — **copy or symlink**, one command.
+[![GitHub stars](https://img.shields.io/github/stars/Alot1z/skill-router?style=social)](https://github.com/Alot1z/skill-router)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](package.json)
 
-- One codebase, zero build: plain ESM JavaScript that runs under **Bun** (`bunx`) and **Node** (`npx`).
-- A Python twin engine (`scripts/conductor.py`) shares the same `registry.json` for the `++` anything path.
-- Multi-client: Claude Code, Codex, OpenCode, Cline, Cursor, Windsurf, Gemini CLI, Warp, GitHub Copilot, Continue, Zed, and the universal `~/.agents/skills`.
+---
 
-## Quickstart
+## 🎯 What is Parasite Skill?
 
-```bash
-# run without installing the npm package
-bunx skill-router --help        # or: npx skill-router --help
+Parasite Skill is a non-invasive enhancement system that injects capabilities into AI clients **without modifying their source code**. It creates extension folders, provides build-time hooks, wraps servers, and protects traceability — all while being fully toggleable and removable.
 
-# local package, no registry publish (as requested):
-bun /e/E-github-repos/skill-router-soucecode/bin/skill-router.js install --yes
-npx --yes /e/E-github-repos/skill-router-soucecode install --yes --force
-# or link it globally once:
-npm install -g /e/E-github-repos/skill-router-soucecode && skill-router install --yes
-```
+### Key Features
 
-## Install (custom CLI install session)
+- 🔌 **Runtime Injection** — Add enhancements that run at startup without touching originals
+- 📁 **Extension Folders** — Each client gets a `.skill-router-extensions/` directory
+- 🛠️ **Build-time Hooks** — Generate Vite/webpack plugins for build-time injection
+- 🖥️ **Server Wrapping** — Wrap upstream servers with enhancement layers
+- 🔒 **Traceability Protection** — Obfuscate extracted code to prevent tracing
+- 🎛️ **Toggleable** — Enable/disable injections on the fly
+- 🔒 **Privacy-First** — All data stays local, no external sharing
 
-```bash
-bun bin/skill-router.js install            # interactive: pick clients
-bun bin/skill-router.js install --yes      # auto: every detected client
-bun bin/skill-router.js install --yes --link       # symlink/junction (single source of truth)
-bun bin/skill-router.js install --yes --copy       # independent copy (default)
-bun bin/skill-router.js install -a claude-code,codex,opencode   # specific clients
-bun bin/skill-router.js install --project            # install into ./<client>/skills instead
-bun bin/skill-router.js list                 # show installed instances
-bun bin/skill-router.js remove --yes         # uninstall from detected clients
-bun bin/skill-router.js install --yes --dest <path>   # install to any custom path
-bun bin/skill-router.js install --yes --dest <path> --link   # custom path, symlink mode
-bun bin/skill-router.js mcp add             # auto-register the MCP server in client configs (no manual config)
-bun bin/skill-router.js mcp remove          # remove MCP registration
-```
+---
 
-`--dest` installs to any directory you choose — not just the known client paths.
-Works with both `--copy` (default) and `--link` (junction/symlink).
+## 🚀 Quick Start
 
-The installer detects which clients you have, dedupes shared directories
-(e.g. Cline/Warp/Zed all read `~/.agents/skills`), and verifies `SKILL.md`
-exists after every install. Symlinks fall back to Windows junctions automatically.
-The interactive mode is a custom TUI: arrow keys + space to pick clients, live
-progress bar, custom logo — no package installs required.
-
-## Routing
+### Installation
 
 ```bash
-bun bin/skill-router.js scan                    # re-analyze the ecosystem
-bun bin/skill-router.js validate                # spec-check all skills (exit 1 on issues)
-bun bin/skill-router.js route "write api docs for a new rest endpoint" --set
-bun bin/skill-router.js route "create a new skill" --set skill-authoring   # route within ONE set
-bun bin/skill-router.js plan "build a frontend todo app with auth"
-bun bin/skill-router.js sets --apply thinking   # load order for a skill-set
-SKILL_ROUTER_HOME=/tmp/sandbox skill-router route "idea"   # full env isolation for any command
-bun bin/skill-router.js refs                    # generate ref pages
-bun bin/skill-router.js wikis                   # wiki + graph.dot + graph.mmd
-bun bin/skill-router.js trace session.log       # which skills a session used
-bun bin/skill-router.js link                    # per-skill refs/wiki links (--unlink, --no-default)
+# Using npm
+npm install -g parasite-skill
+
+# Using bun
+bun add -g parasite-skill
+
+# Using npx (no install)
+npx parasite-skill --help
 ```
 
-Scoring is deterministic (tokenized, stemmed, IDF-weighted; rare tokens weigh
-more; name matches get a bonus). It is a ranked *hypothesis* — the skill's
-SKILL.md instructs the agent to re-verify and apply semantic judgment.
-
-`route --set <name>` restricts scoring to one skill-set (custom sets from
-`sets --new` work too — e.g. `--set skill-authoring`), and `SKILL_ROUTER_HOME`
-redirects the registry/installs/MCP for sandboxed runs. The MCP route tool
-accepts the same optional `set` argument.
-
-## Skill-sets
-
-Named bundles activated in one word: `thinking`, `research`, `planning`, `build`,
-`docs`, `review`, `frontend`, `ops`, `intelligence`. Composable — a docs task is
-`planning x docs x thinking`.
-
-## Always-on cadence
-
-Thinking skills are re-invoked *throughout* execution, not once at the start:
-`tractatus-thinking` + `sequential-thinking` before tool use, `doubt-driven-development`
-before every non-trivial decision, `debug-thinking` on failure, `stop-slop` before
-prose, `verification-before-completion` + review after every milestone.
-
-## Development
+### First Steps
 
 ```bash
-bun test          # engine unit tests
-bun run scan      # refresh registry.json
-SKILL_ROUTER_HOME=/tmp/fake-home bun bin/skill-router.js install --yes   # sandbox install
+# Check installation status
+parasite-skill list
+
+# Install to a specific client
+parasite-skill install --agent claude-code
+
+# View injection status
+parasite-skill parasite --status
 ```
 
-See `docs/RESEARCH.md` for the ecosystem research that shaped this package
-(skills.sh, agentskills.io, 10+ starred repos, star analysis).
+---
 
-## Beyond the CLI
+## 📚 Documentation
 
-- **No-npm install from GitHub Pages** — `bundle` builds a tarball + `install.json`;
-  the included `.github/workflows/deploy-pages.yml` serves it, and
-  `scripts/gh-install.sh` installs with a single curl (no node/npm/bun needed).
-- **Polyglot MCP** — the server ships in JS (`src/mcp-server.js`, runs under
-  bun and node) and Python (`scripts/mcp_server.py`) with identical JSON-RPC
-  protocol and tools. Boots in ~0.3s, zero resident memory.
-- **Cloud sync** — `sync --init <repo> / --push / --pull` backs up the whole
-  skills tree to git; the `template/` dir is a ready-made repo for it.
-- **Skill-sets editor** — `sets --new/--add/--remove` create custom sets
-  persisted to `sets.custom.json` (marked `*` in listings).
-- **AGENTS.md generator** — `agents` writes a project AGENTS.md with the full
-  skill inventory + always-on cadence.
-- **IX-inspired graph** — `graph --dot|--mmd` emits a skill-relatedness graph
-  (Jaccard over keywords). Self-contained; no upstream code vendored, so
-  upstream ix updates can never conflict.
-- **Manifest-based language detection** — the scanner reads `Cargo.toml`,
-  `go.mod`, `package.json`, `pyproject.toml` and more, so a skill with only
-  build manifests is still tagged `rust`/`go`/etc. The skill payload also ships
-  `fast_scan.rs`, a zero-dependency Rust scanner for very large skill trees
-  (pattern from the Rust CLI tools in the starred-repo research).
-- **Scan timing** — `scan` reports elapsed ms (110ms for 84 skills).
-- **Privacy-clean** — the repo contains no usernames, hardcoded home paths,
-  tokens, or emails (verified by an automated scan). All machine paths are
-  resolved at runtime from `os.homedir()`.
+| Section | Description |
+|---------|-------------|
+| [Getting Started](#-quick-start) | Installation and first steps |
+| [Commands](#-commands) | Complete command reference |
+| [Parasite System](#-parasite-extension-system) | Runtime injection guide |
+| [Build Hooks](#-build-hooks) | Vite/webpack plugin generation |
+| [Server Wrapping](#-server-wrapping) | Upstream server enhancement |
+| [Traceability](#-traceability-protection) | Code obfuscation guide |
+| [API Reference](docs/API.md) | Programmatic API |
+| [Contributing](CONTRIBUTING.md) | How to contribute |
 
-## License
+---
 
-MIT
+## 🛠️ Commands
+
+### Core Commands
+
+```bash
+# Install the skill into AI clients
+parasite-skill install
+parasite-skill install --yes --all
+parasite-skill install --agent claude-code,cursor
+
+# List installed instances
+parasite-skill list
+
+# Remove installed instances
+parasite-skill remove --agent claude-code
+
+# Refresh all installed copies
+parasite-skill refresh
+```
+
+### Routing Commands
+
+```bash
+# Scan the skill ecosystem
+parasite-skill scan
+
+# Route an idea to skills
+parasite-skill route "build a REST API with authentication"
+
+# Route within a specific skill-set
+parasite-skill route "implement user auth" --set build
+
+# Generate execution plan
+parasite-skill plan "create a React dashboard"
+
+# List available skill-sets
+parasite-skill sets
+```
+
+### Parasite Commands
+
+```bash
+# View injection status
+parasite-skill parasite --status
+
+# Add a runtime injection
+parasite-skill parasite --add --agent claude-code --type hook --code "console.log('active')"
+
+# Toggle an injection
+parasite-skill parasite --toggle injection-1234567890 --enable
+
+# Remove an injection
+parasite-skill parasite --remove injection-1234567890
+
+# Generate build hooks
+parasite-skill parasite --hook vite --out vite-plugin.js
+parasite-skill parasite --hook webpack --out webpack-plugin.js
+
+# Generate server wrapper
+parasite-skill parasite --wrap --server ./upstream-server.js --out wrapped-server.js
+
+# Protect code traceability
+parasite-skill parasite --protect --file input.js --level medium --out protected.js
+```
+
+### Utility Commands
+
+```bash
+# Generate skill graph
+parasite-skill graph --dot
+parasite-skill graph --mmd
+
+# Generate AGENTS.md
+parasite-skill agents
+
+# Sync skills to git
+parasite-skill sync --init <repo-url>
+parasite-skill sync --push
+
+# Build distribution bundle
+parasite-skill bundle
+```
+
+---
+
+## 🔌 Parasite Extension System
+
+The parasite system enables runtime injection without modifying source code.
+
+### How It Works
+
+1. **Extension folders** are created in each client's skills directory
+2. **Injections** are stored as separate files, never modifying originals
+3. **Manifests** track all injections and their state
+4. **Build hooks** generate plugin code for Vite/webpack
+5. **Server wrappers** create enhancement layers around upstream servers
+
+### Injection Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `pre-init` | Runs before client initialization | Setup, configuration |
+| `post-init` | Runs after client initialization | Cleanup, logging |
+| `middleware` | Adds HTTP middleware | Auth, CORS, logging |
+| `hook` | Wraps existing functions | Monitoring, caching |
+
+### Traceability Protection Levels
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| `light` | Remove comments, minify whitespace | Quick obfuscation |
+| `medium` | Rename variables, add dead code | Standard protection |
+| `heavy` | Full obfuscation with control flow flattening | Maximum protection |
+
+---
+
+## 🛠️ Build Hooks
+
+Generate plugins for build tools to inject code at build time.
+
+### Vite Plugin
+
+```bash
+parasite-skill parasite --hook vite --out vite-plugin.js
+```
+
+```js
+// vite.config.js
+import { skillRouterParasite } from './vite-plugin.js';
+
+export default {
+  plugins: [
+    skillRouterParasite({
+      // Your configuration
+    })
+  ]
+};
+```
+
+### Webpack Plugin
+
+```bash
+parasite-skill parasite --hook webpack --out webpack-plugin.js
+```
+
+```js
+// webpack.config.js
+const SkillRouterParasite = require('./webpack-plugin.js');
+
+module.exports = {
+  plugins: [
+    new SkillRouterParasite({
+      // Your configuration
+    })
+  ]
+};
+```
+
+---
+
+## 🖥️ Server Wrapping
+
+Wrap upstream servers with enhancement layers without modifying their code.
+
+```bash
+parasite-skill parasite --wrap --server ./upstream-server.js --out wrapped-server.js
+```
+
+```js
+// wrapped-server.js
+import { createServer as createUpstreamServer } from './upstream-server.js';
+
+const enhancements = [
+  {
+    type: 'middleware',
+    code: 'console.log("Request:", req.url);',
+    enabled: true
+  }
+];
+
+export function createServer(options = {}) {
+  const app = createUpstreamServer(options);
+  // Apply enhancements
+  return app;
+}
+```
+
+---
+
+## 🔒 Traceability Protection
+
+Protect extracted code from being traced back to its source.
+
+```bash
+# Light protection (remove comments, minify)
+parasite-skill parasite --protect --file input.js --level light --out protected.js
+
+# Medium protection (rename variables, add dead code)
+parasite-skill parasite --protect --file input.js --level medium --out protected.js
+
+# Heavy protection (full obfuscation)
+parasite-skill parasite --protect --file input.js --level heavy --out protected.js
+```
+
+---
+
+## 🎨 Interactive Graph
+
+Visualize skill relationships with an interactive graph.
+
+```bash
+# Generate DOT format
+parasite-skill graph --dot > skills.dot
+
+# Generate Mermaid format
+parasite-skill graph --mmd > skills.mmd
+
+# View in browser
+open https://mermaid.live/edit
+```
+
+---
+
+## 📊 Skill-Sets
+
+Named bundles activated in one word:
+
+| Set | Use For | Skills |
+|-----|---------|--------|
+| `thinking` | Decompose + reason + doubt | tractatus-thinking, sequential-thinking, debug-thinking |
+| `research` | Verify against real sources | deepwiki, context7, find-docs |
+| `planning` | Idea → spec → tasks | brainstorming, spec-driven-development |
+| `build` | Implement in slices | incremental-implementation, tdd |
+| `docs` | Write + keep docs honest | documentation-writer, readme-skill |
+| `review` | Gate before merge | code-review-and-quality |
+| `frontend` | UI that actually works | frontend-ui-engineering |
+| `ops` | Ship safely | ci-cd-and-automation |
+| `intelligence` | Understand codebase | ix, understand, code-review-graph |
+
+### Custom Skill-Sets
+
+```bash
+# Create a custom set
+parasite-skill sets --new my-project --members "brainstorming,spec-driven-development"
+
+# Add a skill to a set
+parasite-skill sets --add my-project:code-review-and-quality
+
+# Remove a skill from a set
+parasite-skill sets --remove my-project:code-review-and-quality
+```
+
+---
+
+## ⚙️ Project Configuration
+
+Each project can define its own defaults via `parasite-skill.json`:
+
+```json
+{
+  "registry": "./.skill-router",
+  "dirs": ["./skills", "./.agents/skills"],
+  "defaultSet": "build",
+  "force": false
+}
+```
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+### Development
+
+```bash
+# Clone the repository
+git clone https://github.com/Alot1z/skill-router.git
+cd skill-router
+
+# Install dependencies
+bun install
+
+# Run tests
+bun test
+
+# Run in development mode
+bun dev
+```
+
+---
+
+## 📄 License
+
+MIT © [Alot1z](https://github.com/Alot1z)
+
+---
+
+## 🙏 Acknowledgments
+
+- [Agent Skills Specification](https://agentskills.io/specification)
+- [Claude Code](https://claude.ai)
+- [Codex CLI](https://github.com/openai/codex)
+- All the amazing AI coding tools out there
+
+---
+
+<div align="center">
+
+**[Documentation](docs/)** • **[API Reference](docs/API.md)** • **[Examples](examples/)** • **[Contributing](CONTRIBUTING.md)**
+
+</div>
