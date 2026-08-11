@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -286,7 +287,18 @@ export function scan(dirs) {
       continue;
     }
     for (const e of entries) {
-      if (e.name.startsWith(".") || !e.isDirectory()) continue;
+      if (e.name.startsWith(".")) continue;
+      // Dirent.isDirectory() is false for symlinks/junctions, which the
+      // installer uses for --link mode — follow them when they point at a dir.
+      let isDir = e.isDirectory();
+      if (!isDir && e.isSymbolicLink()) {
+        try {
+          isDir = statSync(join(d, e.name)).isDirectory();
+        } catch {
+          continue; // dangling link
+        }
+      }
+      if (!isDir) continue;
       const s = scanSkillDir(join(d, e.name));
       if (s) skills[s.name] = s; // later dirs (project) override user
     }

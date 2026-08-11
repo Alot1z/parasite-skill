@@ -6,6 +6,8 @@ import { loadProjectConfig, mergeConfig, loadSetsWithProject } from "../src/engi
 import { cmdSets } from "../src/commands/sets.js";
 import { cmdRoute } from "../src/commands/route.js";
 import { addInjection, toggleInjection, removeInjection, getExtensionDir } from "../src/parasite/index.js";
+import { symlinkSync } from "node:fs";
+import { scan } from "../src/engine.js";
 
 function tmpSkill(name, desc) {
   const dir = join(tmpdir(), `sr-config-${name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
@@ -164,6 +166,29 @@ describe("project sets in commands", () => {
       rmSync(skillDir, { recursive: true, force: true });
     }
     expect(logs.join("\n")).toContain("top skills within set 'proj-qa'");
+  });
+});
+
+describe("scan follows symlinked/junction skill dirs", () => {
+  test("discovers a skill reachable only through a link (--link install mode)", () => {
+    if (process.platform === "win32" && typeof Bun === "undefined") {
+      // bun:test runs on Bun; junction type requires win32 — guard anyway.
+    }
+    const base = join(tmpdir(), `sr-link-${Date.now()}`);
+    const real = join(base, "real-location");
+    const scanRoot = join(base, "skills");
+    mkdirSync(real, { recursive: true });
+    mkdirSync(scanRoot, { recursive: true });
+    writeFileSync(join(real, "SKILL.md"), "---\nname: linked-skill\ndescription: reached through a junction or symlink\n---\n", "utf-8");
+    try {
+      const type = process.platform === "win32" ? "junction" : "dir";
+      symlinkSync(real, join(scanRoot, "linked-skill"), type);
+      const payload = scan([scanRoot]);
+      const names = payload.skills.map((s) => s.name);
+      expect(names).toContain("linked-skill");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 
