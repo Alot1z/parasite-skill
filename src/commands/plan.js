@@ -21,6 +21,7 @@ export function cmdPlan(args) {
     maxChars: args.maxChars,
     excludeSkills: args.excludeSkills,
     enabledSets: args.enabledSets,
+    auto: args.auto === true,
   });
   const chatSafe = args.chatSafe === true;
   const slug = slugify(args.request);
@@ -37,6 +38,7 @@ export function cmdPlan(args) {
     `Routed by parasite-skill v${VERSION}; the runtime payload contains only selected skills and bounded excerpts.`,
     `Decision modes: ${runtime.decision.modes.join(", ")}`,
     `Selected set: ${runtime.decision.selectedSkillSet}`,
+    `${runtime.decision.auto ? "Mode: auto-max — always-on cadence pinned around the routed skills." : "Mode: standard routing."}`,
     "",
     "## Selected execution order",
     "",

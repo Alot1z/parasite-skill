@@ -22,6 +22,7 @@ export function cmdCompose(args) {
     maxChars: args.maxChars,
     excludeSkills: args.excludeSkills,
     enabledSets: args.enabledSets,
+    auto: args.auto === true,
   });
   const outDir = join(reg, "payload");
   mkdirSync(outDir, { recursive: true });
@@ -35,6 +36,7 @@ export function cmdCompose(args) {
   console.log(`request: ${JSON.stringify(runtime.request)}`);
   console.log(`modes: ${runtime.decision.modes.join(", ")}`);
   console.log(`selected set: ${runtime.decision.selectedSkillSet}`);
+  if (runtime.decision.auto) console.log("mode: auto-max — always-on cadence pinned around the routed skills");
   console.log("selected skills:");
   for (const skill of runtime.selectedSkills) {
     const excerpt = skill.excerpts.length ? `, ${skill.excerpts.length} excerpt${skill.excerpts.length === 1 ? "" : "s"}` : "";

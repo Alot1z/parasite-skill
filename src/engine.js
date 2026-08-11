@@ -232,6 +232,17 @@ export function scanSkillDir(skillPath) {
     }
   }
   const assets = scanSkillAssets(skillPath);
+  // Skills may declare AI-tool metadata (description / argsSchema overrides) as
+  // a `tools:` JSON block in the frontmatter, keyed by tool name or asset path.
+  let toolsMeta = null;
+  if (typeof meta.tools === "string" && meta.tools.trim()) {
+    try {
+      const parsed = JSON.parse(meta.tools);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) toolsMeta = parsed;
+    } catch {
+      toolsMeta = null; // malformed metadata is ignored, never fatal
+    }
+  }
   const languages = [];
   const walk = (dir) => {
     if (!existsSync(dir)) return;
@@ -284,6 +295,7 @@ export function scanSkillDir(skillPath) {
     bodyKeywords,
     spec_ok: issues.length === 0,
     issues,
+    ...(toolsMeta ? { toolsMeta } : {}),
   };
 }
 
@@ -480,6 +492,17 @@ export function composePayload(payload, idea, options = {}) {
     };
   });
 
+  const autoMax = options.auto === true;
+  // Auto-max mode pins the always-on thinking cadence ahead of the routed
+  // skills so execution always starts with decomposition, stays doubtful
+  // between steps, and ends with verification — without dumping the registry.
+  const cadenceStart = ["tractatus-thinking", "sequential-thinking", "doubt-driven-development"];
+  const cadenceEnd = ["verification-before-completion", "code-review-and-quality"];
+  const selectedOrder = selectedSkills.map((skill) => skill.name);
+  const executionOrder = autoMax
+    ? [...new Set([...cadenceStart, ...selectedOrder, ...cadenceEnd])]
+    : selectedOrder;
+
   return {
     kind: "parasite-skill-runtime-payload",
     version: VERSION,
@@ -490,11 +513,14 @@ export function composePayload(payload, idea, options = {}) {
       explicitSkills: classification.explicitSkills,
       selectedSkillSet: bestSet,
       selectedCount: selectedSkills.length,
-      rationale: "Deterministic routing narrowed the ecosystem; semantic mode/tag and explicit-skill signals adjusted the final selection.",
+      auto: autoMax,
+      rationale: autoMax
+        ? "auto-max mode: deterministic routing narrowed the ecosystem, semantic signals adjusted the selection, and the always-on cadence is pinned ahead of and after the routed skills."
+        : "Deterministic routing narrowed the ecosystem; semantic mode/tag and explicit-skill signals adjusted the final selection.",
     },
     selectedSkills,
     execution: {
-      order: selectedSkills.map((skill) => skill.name),
+      order: executionOrder,
       tools: selectedSkills.flatMap((skill) => skill.assets.filter((asset) => ["scripts", "hooks", "tools"].includes(asset.group)).map((asset) => ({ skill: skill.name, ...asset }))),
       cadence: {
         start: ["tractatus-thinking", "sequential-thinking", "deepwiki-or-context7"],
@@ -755,6 +781,33 @@ export function mergeConfig(projectConfig, cliFlags) {
     } else {
       console.error("Warning: invalid 'parasite' in parasite-skill.json (expected boolean or {enabled, clients[]})");
     }
+  }
+
+  // Per-project AI-tools policy: { allow?: string[], deny?: string[], env?: string[] }.
+  // Restricts which skill tools may execute and which environment keys are
+  // visible to tool processes. CLI flags (--env-filter) still win on env keys.
+  if (projectConfig.tools !== undefined && projectConfig.tools !== null) {
+    if (typeof projectConfig.tools === "object" && !Array.isArray(projectConfig.tools)) {
+      const tools = {};
+      for (const key of ["allow", "deny", "env"]) {
+        if (Array.isArray(projectConfig.tools[key]) && projectConfig.tools[key].every((v) => typeof v === "string")) {
+          tools[key] = projectConfig.tools[key];
+        }
+      }
+      // Project-wide execution timeout in ms (>=1000), overridable by --timeout-ms.
+      if (typeof projectConfig.tools.timeoutMs === "number" && projectConfig.tools.timeoutMs >= 1000) {
+        tools.timeoutMs = projectConfig.tools.timeoutMs;
+      }
+      if (Object.keys(tools).length) merged.tools = { ...(merged.tools ?? {}), ...tools };
+      else console.error("Warning: 'tools' in parasite-skill.json has no valid allow/deny/env arrays");
+    } else {
+      console.error("Warning: invalid 'tools' in parasite-skill.json (expected object with allow/deny/env string arrays)");
+    }
+  }
+  // CLI --env-filter a,b replaces the configured env allowlist but preserves
+  // the project allow/deny lists parsed above.
+  if (cliFlags.envFilter) {
+    merged.tools = { ...(merged.tools ?? {}), env: String(cliFlags.envFilter).split(",").map((v) => v.trim()).filter(Boolean) };
   }
 
   // Project-scoped client allowlist: only these clients are managed by

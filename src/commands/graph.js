@@ -7,6 +7,7 @@ import { getInjectionStatus } from "../parasite/index.js";
 import { mcpRegistrationStatus } from "../mcp-register.js";
 import { AGENT_PROFILES } from "../data/agent-profiles.js";
 import { buildEcosystemGraph, ecosystemToDot, ecosystemToMermaid, publicGraph } from "../ecosystem-graph.js";
+import { listSkillTools } from "../ai-tools.js";
 import { smallLogo } from "../logo.js";
 
 function similarity(a, b) {
@@ -94,7 +95,7 @@ export function cmdGraph(args = {}) {
     path: entry.path,
   }));
   const mcp = mcpRegistrationStatus();
-  const graph = buildEcosystemGraph({ skills, sets, clients, extensions, mcp, rules: safeRules(), profiles: AGENT_PROFILES });
+  const graph = buildEcosystemGraph({ skills, sets, clients, extensions, mcp, rules: safeRules(), profiles: AGENT_PROFILES, tools: listSkillTools(payload) });
   const outputGraph = args.public ? publicGraph(graph) : graph;
 
   if (args.json) console.log(JSON.stringify(outputGraph, null, 2));

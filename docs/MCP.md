@@ -58,6 +58,20 @@ dependencies and does not require model credentials.
 | `wikis` | — | generate wiki and graphs |
 | `graph` | `format?` (`json`, `dot`, `mmd`) | typed ecosystem graph |
 | `list_installs` | — | installed client locations |
+| `skill_tools_list` | `dirs?`, `allow?`, `deny?` | inventory callable skill AI-tools (scripts, hooks, tools); policy-filtered |
+| `skill_tools_audit` | `threshold?`, `dirs?` | static risk audit of discovered skill AI-tools; never executes anything |
+| `skill_tools_run` | `name`, `args?`, `timeout_ms?`, `dirs?`, `allow?`, `deny?`, `env?` | explicitly execute one skill AI-tool; bounded, captured, redacted, policy-gated |
+
+`skill_tools_run` makes the skill ecosystem executable by the host LLM: the
+host first lists the tools, then calls the ones it needs with a space-separated
+argument string. Execution only ever happens when this tool is called, is
+capped at 30s by default, and the returned stdout/stderr are redacted.
+
+`allow` and `deny` are tool-name glob lists (deny wins; a non-empty allow must
+match). `env` is an optional allowlist of environment keys visible to the tool
+process (PATH is always kept). These map to the same policy as the
+`parasite-skill.json` `tools` block and protect the host when it calls tools
+autonomously.
 
 ## Adaptive execution model
 

@@ -2,7 +2,8 @@
 // Speaks the Model Context Protocol subset: initialize, ping, tools/list, tools/call.
 // Run:  bun src/mcp-server.js   (or:  node src/mcp-server.js)
 import { createInterface } from "node:readline";
-import { VERSION } from "./engine.js";
+import { VERSION, loadRegistry, registryDir } from "./engine.js";
+import { auditSkillTools, filterToolsByPolicy, listSkillTools, runSkillTool } from "./ai-tools.js";
 import {
   cmdPlan,
   cmdCompose,
@@ -96,6 +97,46 @@ const TOOLS = [
     description: "List where the parasite-skill skill is currently installed across clients.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "skill_tools_list",
+    description: "Inventory every callable skill AI-tool (scripts, hooks, tools) so the host can invoke them via skill_tools_run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dirs: { type: "string", description: "extra scan dirs, comma-separated" },
+        allow: { type: "array", items: { type: "string" }, description: "tool-name glob allowlist" },
+        deny: { type: "array", items: { type: "string" }, description: "tool-name glob denylist" },
+      },
+    },
+  },
+  {
+    name: "skill_tools_audit",
+    description: "Static risk audit of discovered skill AI-tools (eval/subprocess/network/secrets patterns). Never executes anything.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dirs: { type: "string", description: "extra scan dirs, comma-separated" },
+        threshold: { type: "string", description: "gate on low|medium|high (default medium)" },
+      },
+    },
+  },
+  {
+    name: "skill_tools_run",
+    description: "Explicitly execute one skill AI-tool. Bounded, captured, and redacted; never runs automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        args: { type: "string", description: "space-separated arguments" },
+        timeout_ms: { type: "number" },
+        dirs: { type: "string" },
+        allow: { type: "array", items: { type: "string" }, description: "tool-name glob allowlist" },
+        deny: { type: "array", items: { type: "string" }, description: "tool-name glob denylist" },
+        env: { type: "array", items: { type: "string" }, description: "env keys visible to the tool process" },
+      },
+      required: ["name"],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------- handlers
@@ -136,6 +177,36 @@ function runTool(name, params = {}) {
       case "wikis": code = cmdWikis(ctx); break;
       case "graph": code = cmdGraph({ ...ctx, ecosystem: true, json: params.format === "json", dot: params.format === "dot", mmd: params.format === "mmd" }); break;
       case "list_installs": code = runList(); break;
+      case "skill_tools_list": {
+        const payload = loadRegistry(registryDir(ctx.registry), ctx.dirs, ctx.force);
+        const policy = { allow: params.allow, deny: params.deny };
+        console.log(JSON.stringify(filterToolsByPolicy(listSkillTools(payload), policy), null, 2));
+        break;
+      }
+      case "skill_tools_audit": {
+        const payload = loadRegistry(registryDir(ctx.registry), ctx.dirs, ctx.force);
+        const audits = auditSkillTools(payload);
+        const threshold = String(params.threshold ?? "medium");
+        const levels = ["low", "medium", "high"];
+        const minIndex = Math.max(0, levels.indexOf(threshold));
+        console.log(JSON.stringify({ threshold, tools: audits, flagged: audits.filter((entry) => levels.indexOf(entry.risk) >= minIndex).length }, null, 2));
+        break;
+      }
+      case "skill_tools_run": {
+        const payload = loadRegistry(registryDir(ctx.registry), ctx.dirs, ctx.force);
+        try {
+          const result = runSkillTool(payload, params.name, params.args, {
+            timeoutMs: params.timeout_ms,
+            policy: { allow: params.allow, deny: params.deny, env: params.env },
+            registry: registryDir(ctx.registry),
+          });
+          console.log(JSON.stringify(result, null, 2));
+        } catch (err) {
+          console.log(JSON.stringify({ ok: false, name: params.name, error: String(err.message ?? err) }, null, 2));
+          code = 1;
+        }
+        break;
+      }
       default: throw new Error(`unknown tool: ${name}`);
     }
   } finally {

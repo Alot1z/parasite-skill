@@ -37,6 +37,7 @@ COMMANDS
   plan      "<request>"     Emit a routed execution plan using an adaptive payload
   compose   "<request>"     Select skills/assets and emit a compact runtime payload
   llm       "<request>"     Send bounded payload to an opt-in OpenAI-compatible endpoint
+                            (exposes skill tools as native functions; --no-tools disables)
   history   discover|import Safely discover/import Freebuff transcripts
   trace     <file>          Count skill usage in a transcript
   link      Create/remove per-skill refs/wiki links (--unlink, --no-default)
@@ -44,8 +45,12 @@ COMMANDS
             server in client configs (no manual config); bare mcp runs the server
   bundle    Build a tarball + install.json manifest for GitHub Pages distribution (--out, --meta)
   sync      Cloud-sync the skills tree to a git remote (--init URL | --push | --pull)
-  agents    Generate AGENTS.md for the current project (--out PATH)
+  agents    Generate AGENTS.md (default), list/show the agent profiles, or
+            run <profile>/--all with a request
   graph     Emit a skill or typed ecosystem graph (--ecosystem, --json | --dot | --mmd, --top N, --threshold X)
+  tools     list|describe|run|run-batch|dry-run|audit|docs|history  Callable
+            AI-tools: skill scripts/hooks/tools as bounded, explicit, captured
+            tools for the host LLM (--json)
   --version | --help  GLOBAL FLAGS
   --registry DIR   Central registry dir (default ~/.agents/skills/.parasite-skill)
   --dirs a,b       Extra scan dirs
@@ -53,6 +58,23 @@ COMMANDS
   --json           Machine-readable output
   --max-chars N    Bound composed excerpts or imported history
   --public         Remove filesystem paths from published graph output
+  --auto           Auto-max routing: pin the always-on cadence around the
+                   routed skills in plan/compose execution order
+
+TOOLS FLAGS
+  --args STR       Space-separated arguments appended to a tools run command
+  --name NAME      Tool name for tools describe/run
+  --names a,b,c    Tool names for tools run-batch
+  --continue       tools run-batch: keep going after a failed tool
+  --timeout-ms N   Tool execution timeout (default 30000, cap 300000;
+                   project tools.timeoutMs is the fallback)
+  --max-tools N    agents run: cap the number of script tools executed
+  --threshold X    tools audit: gate on low|medium|high risk
+  --clear          tools history: clear the run ledger
+  --limit N        tools history: how many ledger entries to show
+  --env-filter a,b Tool env allowlist (only these env keys reach tool processes)
+  --no-tools       llm: do not expose skill tools as functions
+  --max-tool-calls N  llm: max tool-calling loop iterations (default 8)
 
 LLM FLAGS
   --endpoint URL   OpenAI-compatible /chat/completions endpoint
@@ -82,6 +104,127 @@ CLIENTS
 `;
 
 export { HELP };
+
+const COMMAND_HELP = {
+  llm: `parasite-skill llm "<request>" [flags]
+
+Send a bounded compose payload to an explicitly selected OpenAI-compatible endpoint.
+
+FLAGS
+  --endpoint URL          Endpoint base or /chat/completions URL
+  --model NAME            Model identifier
+  --timeout MS            Request timeout
+  --max-output-tokens N   Bound model output (default 1200)
+  --max-response-chars N Bound returned text
+  --api-key KEY           Prefer PARASITE_SKILL_LLM_API_KEY instead
+  --allow-remote          Permit external HTTPS endpoints; local-only by default
+
+SAFETY
+  No model call occurs unless this command is explicitly invoked. Full skill files,
+  credentials, environment values, and unselected assets are not sent in the payload.
+  Never place API keys in source control or shell history.`,
+  history: `parasite-skill history discover|import [flags]
+
+Discover candidate Freebuff transcript files or import one file selected by you.
+
+FLAGS
+  --history-dirs a,b  Extra directories to inspect for candidate metadata
+  --file PATH          Required for import; the original is never modified
+  --max-chars N        Bound imported text
+  --json               Emit machine-readable metadata
+
+SAFETY
+  Discovery reports names, sizes, and modified times only. Import is explicit,
+  bounded, and sanitizes common credentials, paths, and email addresses.`,
+  parasite: `parasite-skill parasite [flags]
+
+Manage opt-in extension manifests without modifying upstream client source files.
+
+FLAGS
+  --status             Show actual local injection state
+  --add --agent ID     Add an explicit injection to a supported client
+  --toggle ID          Enable/disable an injection
+  --remove ID          Remove an injection
+  --hook vite|webpack  Generate a build hook
+  --wrap PATH          Generate a wrapper around an explicit upstream server
+  --protect            Transform explicitly supplied code
+
+SAFETY
+  Extensions are reversible and project client allowlists are enforced. This does
+  not bypass permissions, rewrite arbitrary closed-source clients, or imply support
+  for targets without an explicit adapter.`,
+  mcp: `parasite-skill mcp add|remove|list [flags]
+
+Register, remove, or inspect the parasite-skill MCP server in supported client configs.
+A bare parasite-skill mcp starts the stdio server.
+
+FLAGS
+  --clients a,b  Restrict changes to named supported targets
+  --runtime node|bun  Select the server runtime where supported
+
+SAFETY
+  Existing configs are backed up before writes. Malformed configs are skipped rather
+  than overwritten. Registration is opt-in and never grants access to other servers.`,
+  tools: `parasite-skill tools list|describe|run [flags]
+
+Turn skill scripts, hooks, and tools into callable AI tools so the main LLM
+(or a CLI/MCP caller) can execute them instead of only reading their metadata.
+
+COMMANDS
+  list                 Inventory every callable skill tool
+  describe <name>      Print a schema-style description for LLM use
+  run <name> [args]    Execute one tool explicitly
+  run-batch a,b,c      Execute several tools sequentially (shared ledger)
+  dry-run <name> [args] Preview the exact command without executing
+  audit                Static risk audit of discovered tools
+  docs                 Generate a TOOLS.md reference of the tool surface
+  history              Show the local execution ledger (--clear to reset)
+
+FLAGS
+  --args STR       Space-separated arguments appended to the tool command
+  --names a,b,c    Tool names for run-batch
+  --continue       run-batch: continue after a failed tool
+  --timeout-ms N   Execution timeout (default 30000, cap 300000)
+  --threshold X    audit gate on low|medium|high
+  --limit N        history entries to show
+  --out PATH       docs: write TOOLS.md elsewhere (default registry/TOOLS.md)
+  --json           Machine-readable output
+
+POLICY
+  parasite-skill.json "tools": { "allow": [...], "deny": [...], "env": [...],
+  "timeoutMs": N, "scoped": { "profile:<name>": {...}, "sets:<set>": {...} } }
+  restricts which tools run, which env keys reach them, and the timeout.
+  Deny wins; a non-empty allow list must match. Tool names support * globs.
+  Skills can declare per-tool description/argsSchema via a "tools": JSON block
+  in their SKILL.md frontmatter.
+
+SAFETY
+  Tools are discovered from local skill assets only and run only when this
+  command is explicitly invoked. Execution is time-bounded, output-captured,
+  redacted, and recorded to the audit ledger. Routing or planning alone never
+  executes tools.`,
+  graph: `parasite-skill graph [flags]
+
+Emit either the legacy skill vocabulary graph or the typed ecosystem graph.
+
+FLAGS
+  --ecosystem       Include skills, sets, assets, clients, extensions, MCP, rules,
+                    declarative agents, and tools as metadata-only nodes
+  --json             JSON output
+  --dot              Graphviz DOT output
+  --mmd              Mermaid output
+  --public           Remove filesystem paths and sanitize public text
+  --top N            Limit legacy relatedness edges
+  --threshold X      Legacy similarity threshold
+
+SAFETY
+  Graphs contain metadata and relationships only. They do not include file contents,
+  chat history, credentials, or environment values.`,
+};
+
+export function commandHelp(command) {
+  return COMMAND_HELP[command] ?? null;
+}
 
 export function parseFlags(argv) {
   const flags = { agents: [], _: [], badFlags: false };
@@ -181,6 +324,18 @@ export function parseFlags(argv) {
       case "--max-output-tokens": { const v = value(++i, a); if (v !== undefined) flags.maxOutputTokens = num(v); break; }
       case "--max-response-chars": { const v = value(++i, a); if (v !== undefined) flags.maxResponseChars = num(v); break; }
       case "--history-dirs": { const v = value(++i, a); if (v !== undefined) flags.historyDirs = v; break; }
+      case "--auto": flags.auto = true; break;
+      case "--args": { const v = value(++i, a); if (v !== undefined) flags.args = v; break; }
+      case "--name": { const v = value(++i, a); if (v !== undefined) flags.name = v; break; }
+      case "--timeout-ms": { const v = value(++i, a); if (v !== undefined) flags.timeoutMs = num(v); break; }
+      case "--max-tools": { const v = value(++i, a); if (v !== undefined) flags.maxTools = num(v); break; }
+      case "--clear": flags.clear = true; break;
+      case "--continue": flags.continue = true; break;
+      case "--names": { const v = value(++i, a); if (v !== undefined) flags.names = v; break; }
+      case "--limit": { const v = value(++i, a); if (v !== undefined) flags.limit = num(v); break; }
+      case "--env-filter": { const v = value(++i, a); if (v !== undefined) flags.envFilter = v; break; }
+      case "--no-tools": flags.noTools = true; break;
+      case "--max-tool-calls": { const v = value(++i, a); if (v !== undefined) flags.maxToolCalls = num(v); break; }
       case "--server": { const v = value(++i, a); if (v !== undefined) flags.server = v; break; }
       default:
         if (a.startsWith("-")) {
@@ -194,7 +349,12 @@ export function parseFlags(argv) {
 
 export async function run(argv) {
   const flags = parseFlags(argv);
+  const [requestedCommand] = flags._;
   if (flags.badFlags) return 2;
+  if (flags.action === "help" && requestedCommand && commandHelp(requestedCommand)) {
+    console.log(commandHelp(requestedCommand));
+    return 0;
+  }
   if (flags.action === "version") {
     console.log(`parasite-skill v${VERSION}`);
     return 0;
@@ -220,6 +380,7 @@ export async function run(argv) {
     idea: arg,
     request: arg,
     historyAction: cmd === "history" ? rest[0] : undefined,
+    toolsAction: cmd === "tools" ? rest[0] : undefined,
     file: flags.file ?? (cmd === "trace" ? rest[0] : undefined),
   };
 
@@ -249,7 +410,13 @@ export async function run(argv) {
     case "link": return commands.cmdLink(ctx);
     case "bundle": return commands.cmdBundle(ctx);
     case "sync": return commands.cmdSync(ctx);
-    case "agents": return commands.cmdAgents(ctx);
+    case "agents": {
+      const sub = flags._[1];
+      if (sub === "run") return commands.cmdAgentsRun(ctx);
+      if (sub === "list" || sub === "show") return commands.cmdAgentsList(ctx);
+      return commands.cmdAgents(ctx);
+    }
+    case "tools": return commands.cmdTools(ctx);
     case "graph": return commands.cmdGraph(ctx);
     case "mcp": {
       if (flags._[1] === "add") return runMcpAdd(ctx);

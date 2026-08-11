@@ -7,6 +7,7 @@ import { getInjectionStatus } from "../parasite/index.js";
 import { mcpRegistrationStatus } from "../mcp-register.js";
 import { AGENT_PROFILES } from "../data/agent-profiles.js";
 import { buildEcosystemGraph, ecosystemToDot, ecosystemToMermaid, publicGraph, sanitizePublicText } from "../ecosystem-graph.js";
+import { listSkillTools } from "../ai-tools.js";
 import { MULTIPLICATIVE_PAIRS } from "../data/sets.js";
 import { fmt, readTemplate } from "./_lib.js";
 
@@ -75,6 +76,7 @@ export function cmdWikis(args) {
     mcp: mcpRegistrationStatus(),
     rules: rulesInventory(),
     profiles: AGENT_PROFILES,
+    tools: listSkillTools(payload),
   });
   const outputGraph = args.public ? publicGraph(graph) : graph;
   writeFileSync(join(wiki, "graph.json"), JSON.stringify(outputGraph, null, 2) + "\n");

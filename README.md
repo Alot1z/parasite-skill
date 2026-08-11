@@ -40,6 +40,118 @@ Routing is deterministic and inspectable: token and body-keyword matches, reques
 
 Project defaults live in `parasite-skill.json` or `.parasite-skill.json` and can define registry/scan paths, sets, enabled sets, exclusions, output limits, client allowlists, isolated environment keys, and the parasite toggle. `PARASITE_SKILL_HOME` isolates the complete runtime for tests or sandboxes.
 
+## AI tools: run skill scripts as tools
+
+Routing and composing describe the ecosystem; `tools` executes it. Every
+installed skill's scripts, hooks, and tools become callable, bounded AI tools
+the main LLM can invoke directly:
+
+```bash
+parasite-skill tools list
+parasite-skill tools describe <name>
+parasite-skill tools run <name> --args "some args"
+parasite-skill tools run-batch a,b,c --args "..."  # sequential run, shared ledger
+parasite-skill tools docs                          # generate registry/TOOLS.md
+```
+
+Tool names are `<skill>__<asset>` (for example `parasite-skill__conductor`).
+Python, JavaScript, and shell assets are discovered automatically. Execution
+is explicit, time-bounded (default 30s), captured, redacted, and recorded to an
+audit ledger — routing or planning alone never runs a tool. `run-batch` stops
+on the first failure unless `--continue` is given. The same tools are exposed
+to MCP hosts as `skill_tools_list`, `skill_tools_run`, and
+`skill_tools_audit`, so the host LLM can call them as functions instead of
+only reading metadata.
+
+Extra tool workflows:
+
+```bash
+parasite-skill tools dry-run <name> --args "..."   # preview the exact command
+parasite-skill tools audit                          # static risk audit of tools
+parasite-skill tools history                        # audit ledger of executed tools
+parasite-skill tools history --clear                # reset the ledger
+```
+
+Skills can declare per-tool metadata in their `SKILL.md` frontmatter as a
+`tools:` JSON block keyed by tool name or asset path — overriding the
+auto-extracted description and adding an `argsSchema` the LLM sees in
+`describe`/native tool-calling:
+
+```markdown
+---
+name: demo-skill
+description: Debug failing tests.
+tools: |
+  {
+    "demo-skill__inspect": {
+      "description": "Inspect the failing test output",
+      "argsSchema": { "type": "object", "properties": { "args": { "type": "string" } } }
+    }
+  }
+---
+```
+
+`tools audit` reads each asset statically (never executes it) and flags code
+execution, network, secrets-read, and destructive patterns as `high`/`medium`/
+`low` risk; `--threshold high` fails the run when any tool is at or above that
+risk.
+
+Projects can gate execution with `parasite-skill.json`:
+
+```json
+{
+  "tools": {
+    "allow": ["demo-skill__*"],
+    "deny": ["dangerous-skill__*"],
+    "env": ["PATH", "HOME"],
+    "timeoutMs": 60000,
+    "scoped": {
+      "profile:security-auditor": { "deny": ["*__deploy*"] },
+      "sets:ops": { "allow": ["release-skill__*"] }
+    }
+  }
+}
+```
+
+Deny wins; a non-empty allow list must match (`*` globs supported). The `env`
+array is the only environment exposed to tool processes (PATH is always kept).
+`--env-filter a,b` overrides it per invocation, and `--timeout-ms N` overrides
+`timeoutMs`. `scoped` merges extra rules per agent profile (`profile:<name>`)
+or skill-set (`sets:<name>`) when `agents run` resolves each profile's policy.
+`trace <file>` also reports tool runs from the ledger alongside skill mentions.
+
+## Auto-max routing
+
+Add `--auto` to `plan` or `compose` to pin the always-on thinking cadence
+around the routed skills in the execution order — decomposition and doubt
+first, verification and review last — without dumping the registry into chat:
+
+```bash
+parasite-skill plan "debug the failing test" --auto
+parasite-skill compose "ship the release" --auto --json
+```
+
+## Execute a declarative agent
+
+Agent profiles are executable workflows, not just recipes:
+
+```bash
+parasite-skill agents run ecosystem-architect "map the ecosystem impact"
+parasite-skill agents run release-engineer "verify the release" --max-tools 4
+```
+
+The run routes the request through the profile's sets, executes the selected
+skills' script tools, asserts the profile's guardrails, and saves a report to
+the registry (`agents/<profile>-<request>.md` + `.json`). Run every profile
+once with `agents run --all "<request>"` — tool execution is deduplicated
+across profiles and a combined report is written to `agents/all-<request>.md`
++ `.json`. Inspect profiles without running anything:
+
+```bash
+parasite-skill agents list          # inventory all profiles
+parasite-skill agents show security-auditor   # print one profile's recipe
+```
+
 ## Typed ecosystem graph
 
 Generate a names-and-relationships-only inventory and graph:
@@ -120,6 +232,11 @@ parasite-skill llm "review this routing plan"
 ```
 
 Local endpoints are allowed by default. External HTTPS endpoints require `--allow-remote`; redirects are disabled and response/output sizes are bounded. Prefer `PARASITE_SKILL_LLM_API_KEY` over command-line keys.
+
+When the registry contains runnable skill tools, `llm` exposes them to the
+model as native functions and executes the tool calls it makes, feeding the
+redacted results back in a loop (max `--max-tool-calls` iterations, default 8)
+until the model produces a final answer. Disable with `--no-tools`.
 
 Freebuff history recovery is explicit:
 

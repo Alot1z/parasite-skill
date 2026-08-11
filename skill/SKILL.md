@@ -54,7 +54,29 @@ parasite-skill wikis
 parasite-skill export
 parasite-skill link [--unlink]
 parasite-skill mcp add|remove|list
+parasite-skill tools list|describe|run <name> [--args STR] [--timeout-ms N]
+parasite-skill tools run-batch a,b,c [--args STR] [--continue]
+parasite-skill tools dry-run <name> [--args STR]   # preview, never execute
+parasite-skill tools audit [--threshold high]      # static risk scan
+parasite-skill tools docs                         # generate registry/TOOLS.md
+parasite-skill tools history [--clear]             # execution audit ledger
+parasite-skill agents list|show <profile>          # inspect profiles, no run
+parasite-skill agents run <profile> "<request>" [--max-tools N]
+parasite-skill agents run --all "<request>"        # every profile once
+parasite-skill plan "<request>" --auto   # auto-max: pin the always-on cadence
 ```
+
+`tools` turns skill scripts/hooks/tools into callable AI tools (also exposed to
+MCP hosts as `skill_tools_list` / `skill_tools_run` / `skill_tools_audit`).
+`agents run` executes a declarative agent profile's workflow and saves a
+report; `agents list`/`agents show` inspect profiles without running them.
+Tools execute only on explicit invocation — never from routing or composing
+alone. The `parasite-skill.json` `tools` block (`allow`/`deny`/`env`,
+`timeoutMs`, `scoped` per `profile:<name>` / `sets:<set>`) gates which tools
+run and which environment keys reach them; skills may declare per-tool
+`description`/`argsSchema` via a `tools:` JSON block in their frontmatter;
+`llm` exposes tools as native functions and executes model tool calls in a
+bounded loop.
 
 ## Always-on cadence
 

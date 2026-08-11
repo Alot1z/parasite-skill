@@ -15,7 +15,7 @@ function addEdge(edges, from, to, relation, weight = 1) {
   edges.push({ from, to, relation, weight });
 }
 
-export function buildEcosystemGraph({ skills = [], sets = {}, clients = [], extensions = [], mcp = [], rules = {}, profiles = {} } = {}) {
+export function buildEcosystemGraph({ skills = [], sets = {}, clients = [], extensions = [], mcp = [], rules = {}, profiles = {}, tools = [] } = {}) {
   const nodes = new Map();
   const edges = [];
   const skillIds = new Map();
@@ -36,6 +36,12 @@ export function buildEcosystemGraph({ skills = [], sets = {}, clients = [], exte
       });
       addEdge(edges, node, assetId, "contains");
     }
+  }
+
+  for (const tool of tools) {
+    const toolId = addNode(nodes, "tool", `${tool.skill}/${tool.path}`, { command: tool.command, language: tool.language, path: tool.path });
+    const skillId = skillIds.get(tool.skill);
+    if (skillId) addEdge(edges, skillId, toolId, "provides");
   }
 
   for (const [name, set] of Object.entries(sets)) {

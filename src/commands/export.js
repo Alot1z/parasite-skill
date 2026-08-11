@@ -14,6 +14,7 @@ import { getInjectionStatus } from "../parasite/index.js";
 import { mcpRegistrationStatus } from "../mcp-register.js";
 import { AGENT_PROFILES } from "../data/agent-profiles.js";
 import { buildEcosystemGraph } from "../ecosystem-graph.js";
+import { listSkillTools } from "../ai-tools.js";
 import { fmt } from "./_lib.js";
 
 // Rule/config files checked for existence only (no contents).
@@ -156,6 +157,7 @@ export function cmdExport(args) {
       mcp,
       rules: { global: globalRules, per_client: perClientRules },
       profiles: AGENT_PROFILES,
+      tools: listSkillTools(payload),
     }),
     project_config: projectInfo,
     note: "Paths and names only — no file contents or secrets. Regenerate with: parasite-skill export",

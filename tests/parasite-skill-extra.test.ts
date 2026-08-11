@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseFlags } from "../src/cli.js";
+import { commandHelp, parseFlags, run } from "../src/cli.js";
 import { handleMessage } from "../src/mcp-server.js";
 import { cmdHistory, discoverHistory } from "../src/commands/history.js";
 import { cmdLlm } from "../src/commands/llm.js";
@@ -51,6 +51,44 @@ describe("parseFlags", () => {
     expect(f.agents).toEqual(["claude-code", "codex"]);
     expect(f.mode).toBe("link");
     expect(f.yes).toBe(true);
+  });
+
+  test("exposes focused help for integration-heavy commands", () => {
+    for (const command of ["llm", "history", "parasite", "mcp", "graph"]) {
+      const help = commandHelp(command);
+      expect(help).toContain(`parasite-skill ${command}`);
+      expect(help).toContain("SAFETY");
+    }
+    expect(commandHelp("unknown")).toBeNull();
+  });
+
+  test("exposes focused help for integration-heavy commands", () => {
+    for (const command of ["llm", "history", "parasite", "mcp", "graph"]) {
+      const help = commandHelp(command);
+      expect(help).toContain(`parasite-skill ${command}`);
+      expect(help).toContain("SAFETY");
+    }
+    expect(commandHelp("unknown")).toBeNull();
+  });
+
+  test("dispatches focused help through the real CLI runner", async () => {
+    const originalLog = console.log;
+    const output = [];
+    console.log = (...args) => output.push(args.join(" "));
+    try {
+      for (const command of ["llm", "history", "parasite", "mcp", "graph"]) {
+        output.length = 0;
+        expect(await run([command, "--help"])).toBe(0);
+        expect(output.join("\\n")).toContain(`parasite-skill ${command}`);
+        expect(output.join("\\n")).toContain("SAFETY");
+      }
+      output.length = 0;
+      expect(await run(["--help"])).toBe(0);
+      expect(output.join("\\n")).toContain("COMMANDS");
+      expect(await run(["llm", "--help", "--bogus"])).toBe(2);
+    } finally {
+      console.log = originalLog;
+    }
   });
 
   test("parses --version / --help as actions", () => {
