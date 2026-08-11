@@ -454,6 +454,81 @@ export function mergeConfig(projectConfig, cliFlags) {
       console.error("Warning: invalid 'sets' in skill-router.json (expected object of {name: {desc, members[]}})");
     }
   }
-  
+
+  // Project routing controls: enabledSets restricts routing to those sets,
+  // excludeSkills blacklists skills, route tunes scoring knobs.
+  if (projectConfig.enabledSets !== undefined && projectConfig.enabledSets !== null) {
+    if (Array.isArray(projectConfig.enabledSets) && projectConfig.enabledSets.every((s) => typeof s === "string")) {
+      merged.enabledSets = projectConfig.enabledSets;
+    } else {
+      console.error("Warning: invalid 'enabledSets' in skill-router.json (expected array of set names)");
+    }
+  }
+
+  if (projectConfig.excludeSkills !== undefined && projectConfig.excludeSkills !== null) {
+    if (Array.isArray(projectConfig.excludeSkills) && projectConfig.excludeSkills.every((s) => typeof s === "string")) {
+      merged.excludeSkills = projectConfig.excludeSkills;
+    } else {
+      console.error("Warning: invalid 'excludeSkills' in skill-router.json (expected array of skill names)");
+    }
+  }
+
+  if (projectConfig.route !== undefined && projectConfig.route !== null) {
+    if (typeof projectConfig.route === "object" && !Array.isArray(projectConfig.route)) {
+      const route = {};
+      if (typeof projectConfig.route.top === "number" && projectConfig.route.top > 0) route.top = projectConfig.route.top;
+      if (typeof projectConfig.route.minScore === "number" && projectConfig.route.minScore >= 0) route.minScore = projectConfig.route.minScore;
+      if (Object.keys(route).length) merged.route = route;
+      else console.error("Warning: 'route' in skill-router.json has no valid knobs (top > 0, minScore >= 0)");
+    } else {
+      console.error("Warning: invalid 'route' in skill-router.json (expected object)");
+    }
+  }
+
+  // Per-project env isolation: an object of key/value strings applied to
+  // generated parasite hooks/wrappers and exposed as ctx.env. It never
+  // mutates the calling shell environment. For full sandbox isolation of the
+  // whole package (registry, installs, sync, MCP) use SKILL_ROUTER_HOME.
+  if (projectConfig.env !== undefined && projectConfig.env !== null) {
+    if (typeof projectConfig.env === "object" && !Array.isArray(projectConfig.env)) {
+      merged.env = projectConfig.env;
+    } else {
+      console.error("Warning: invalid 'env' in skill-router.json (expected object of key/value strings)");
+    }
+  }
+
+  // Per-project parasite control: `false` disables runtime injections for
+  // this project; an object { enabled, clients[] } restricts which clients
+  // are touched. "Toggleable but also able not to use it" — per project.
+  if (projectConfig.parasite !== undefined && projectConfig.parasite !== null) {
+    if (typeof projectConfig.parasite === "boolean") {
+      merged.parasite = { enabled: projectConfig.parasite };
+    } else if (typeof projectConfig.parasite === "object" && !Array.isArray(projectConfig.parasite)) {
+      const parasite = { enabled: projectConfig.parasite.enabled !== false };
+      if (Array.isArray(projectConfig.parasite.clients) && projectConfig.parasite.clients.every((c) => typeof c === "string")) {
+        parasite.clients = projectConfig.parasite.clients;
+      }
+      merged.parasite = parasite;
+    } else {
+      console.error("Warning: invalid 'parasite' in skill-router.json (expected boolean or {enabled, clients[]})");
+    }
+  }
+
+  // Project-scoped client allowlist: only these clients are managed by
+  // install/refresh/parasite/export in this project. CLI --clients wins.
+  if (projectConfig.clients !== undefined && projectConfig.clients !== null && !cliFlags.clients) {
+    if (Array.isArray(projectConfig.clients) && projectConfig.clients.every((c) => typeof c === "string")) {
+      merged.clients = projectConfig.clients;
+    } else {
+      console.error("Warning: invalid 'clients' in skill-router.json (expected array of client ids)");
+    }
+  }
+
+  // Footgun guard: routing within a set that enabledSets excludes yields an
+  // empty result with no explanation — surface it up front.
+  if (merged.set && Array.isArray(merged.enabledSets) && merged.enabledSets.length && !merged.enabledSets.includes(merged.set)) {
+    console.error(`Warning: routing set '${merged.set}' is not in enabledSets [${merged.enabledSets.join(", ")}] — routing will return no results`);
+  }
+
   return merged;
 }

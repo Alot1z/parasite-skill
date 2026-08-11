@@ -1,0 +1,27 @@
+{
+  "_comment": "Copy this file to skill-router.json in your project root. All keys optional; CLI flags always win over config values. Config is found by walking up from the current directory.",
+  "registry": "./.skill-router",
+  "dirs": ["./.agents/skills", "./skills"],
+  "defaultSet": "build",
+  "force": false,
+  "enabledSets": ["build", "review"],
+  "excludeSkills": ["skill-i-never-want"],
+  "route": { "top": 8, "minScore": 0 },
+  "env": {
+    "_comment": "Per-project env isolation: exposed as ctx.env and baked into generated parasite hooks/wrappers. Never mutates your shell. Values are never exported (key names only).",
+    "GSM_API_URL": "http://localhost:3000"
+  },
+  "parasite": {
+    "_comment": "Per-project toggle for the enhancement layer: set enabled=false to disable runtime injections in this project entirely.",
+    "enabled": true,
+    "clients": ["claude-code", "cursor"]
+  },
+  "clients": ["claude-code", "cursor"],
+  "sets": {
+    "_comment": "Project-defined skill-sets, marked (project), override same-named sets, edited only here.",
+    "proj-qa": {
+      "desc": "project QA workflow",
+      "members": ["verification-before-completion", "code-review-and-quality"]
+    }
+  }
+}

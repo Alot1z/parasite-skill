@@ -8,8 +8,37 @@ export function cmdRoute(args) {
     return 1;
   }
   const allSets = loadSetsWithProject(reg, args.sets);
-  const { scored, setScores } = scoreIdea(payload, args.idea, allSets);
-  const top = scored.slice(0, Number.isFinite(args.top) && args.top > 0 ? args.top : 8);
+  let { scored, setScores } = scoreIdea(payload, args.idea, allSets);
+
+  // Project-level routing controls from skill-router.json (merged into args):
+  //  - excludeSkills: never route to these skills
+  //  - enabledSets:   only route within the members of these sets
+  //  - route.minScore: drop scores below the floor
+  //  - route.top:     default top-N when --top is not given
+  const exclude = new Set(Array.isArray(args.excludeSkills) ? args.excludeSkills : []);
+  if (exclude.size) scored = scored.filter(([name]) => !exclude.has(name));
+
+  if (Array.isArray(args.enabledSets) && args.enabledSets.length) {
+    const allowed = new Set();
+    for (const sn of args.enabledSets) {
+      const members = allSets[sn]?.members;
+      if (Array.isArray(members)) for (const m of members) allowed.add(m);
+      else console.error(`unknown skill-set in enabledSets: ${sn}`);
+    }
+    scored = scored.filter(([name]) => allowed.has(name));
+    setScores = setScores.filter(([sn]) => args.enabledSets.includes(sn));
+  }
+
+  const minScore = typeof args.route?.minScore === "number" ? args.route.minScore : 0;
+  if (minScore > 0) scored = scored.filter(([, s]) => s >= minScore);
+
+  const topN =
+    Number.isFinite(args.top) && args.top > 0
+      ? args.top
+      : typeof args.route?.top === "number" && args.route.top > 0
+        ? args.route.top
+        : 8;
+  const top = scored.slice(0, topN);
   // --set <name>: constrain routing to one skill-set (values, not the boolean).
   if (typeof args.set === "string") {
     const members = allSets[args.set]?.members;
@@ -20,7 +49,7 @@ export function cmdRoute(args) {
     const inSet = new Set(members);
     const within = scored.filter(([name]) => inSet.has(name)).slice(0, top.length);
     if (args.json) {
-      console.log(JSON.stringify({ idea: args.idea, set: args.set, scores: within }, null, 2));
+      console.log(JSON.stringify({ idea: args.idea, set: args.set, scores: within, filters: { excludeSkills: [...exclude], enabledSets: args.enabledSets ?? [], minScore } }, null, 2));
       return 0;
     }
     console.log(`idea: ${JSON.stringify(args.idea)}`);
@@ -29,7 +58,7 @@ export function cmdRoute(args) {
     return 0;
   }
   if (args.json) {
-    console.log(JSON.stringify({ idea: args.idea, scores: top, sets: setScores }, null, 2));
+    console.log(JSON.stringify({ idea: args.idea, scores: top, sets: setScores, filters: { excludeSkills: [...exclude], enabledSets: args.enabledSets ?? [], minScore } }, null, 2));
     return 0;
   }
   console.log(`idea: ${JSON.stringify(args.idea)}`);

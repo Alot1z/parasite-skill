@@ -147,6 +147,12 @@ The CLI walks up the directory tree from the current working directory to find a
   "dirs": ["./skills", "./.agents/skills"],
   "defaultSet": "build",
   "force": false,
+  "enabledSets": ["build", "review"],
+  "excludeSkills": ["skill-i-never-want"],
+  "route": { "top": 8, "minScore": 0 },
+  "env": { "GSM_API_URL": "http://localhost:3000" },
+  "parasite": { "enabled": true, "clients": ["claude-code", "cursor"] },
+  "clients": ["claude-code", "cursor"],
   "sets": {
     "proj-qa": {
       "desc": "project QA workflow",
@@ -159,12 +165,20 @@ The CLI walks up the directory tree from the current working directory to find a
 ### Config Options
 
 | Option | Description | Example |
-|---|---|---|---|
+|---|---|---|
 | `registry` | Path to the registry directory (overrides default) | `"./.skill-router"` |
-| `dirs` | Comma-separated scan directories | `"./skills,./.agents/skills"` |
-| `defaultSet` | Default skill-set to use for routing | `"build"` |
+| `dirs` | Scan directories (array or comma-separated string) | `["./skills", "./.agents/skills"]` |
+| `defaultSet` | Default skill-set to use for routing (same as `--set NAME`) | `"build"` |
 | `force` | Force rescan on every run | `true` |
-| `sets` | Project-defined skill-sets, merged into routing/planning/sets (override any same-named set — built-in or custom; marked `(project)` in listings) | `{"proj-qa": {"desc": "...", "members": ["..."]}}` |
+| `sets` | Project-defined skill-sets, merged into routing/planning/sets (override any same-named set — built-in or custom; marked `(project)` in listings; edited only via the config file, never the `--new/--add/--remove/--delete` editor) | `{"proj-qa": {"desc": "...", "members": ["..."]}}` |
+| `enabledSets` | **Route-within-set at the project level**: routing only considers members of these sets (union) | `["build", "review"]` |
+| `excludeSkills` | Skills that are never routed to in this project (blacklist) | `["skill-i-never-want"]` |
+| `route` | Default scoring knobs: `top` (default top-N) and `minScore` (drop scores below the floor). CLI `--top` wins | `{"top": 8, "minScore": 0}` |
+| `env` | **Per-project env isolation**: key/value pairs exposed as `ctx.env` and baked into generated parasite hooks/wrappers. Never mutates your shell; for full sandbox isolation of the whole package use `SKILL_ROUTER_HOME` | `{"GSM_API_URL": "http://localhost:3000"}` |
+| `parasite` | **Per-project toggle for the enhancement layer**: `false` disables runtime injections in this project ("able not to use it"); `{ "enabled": true, "clients": [...] }` restricts which clients are touched | `{ "enabled": true, "clients": ["claude-code", "cursor"] }` |
+| `clients` | Project-wide client allowlist: only these clients are managed by install/refresh/parasite/export in this project | `["claude-code", "cursor"]` |
+
+CLI flags always take precedence over config values. The config is found by walking up from the current directory, so one file in the project root covers every subdirectory. `export` records the active project config (sets, enabledSets, excludeSkills, parasite state, env key names, client allowlist) in `ECOSYSTEM.md` + `ecosystem.json` — paths and key names only, never values of `env` entries.
 
 ### Example: Project-Specific Workflow
 
@@ -173,11 +187,14 @@ Create `skill-router.json` in your project root:
 ```json
 {
   "dirs": ["./.agents/skills", "./skills"],
-  "defaultSet": "build"
+  "defaultSet": "build",
+  "enabledSets": ["build", "review"],
+  "excludeSkills": ["obsolete-skill"],
+  "parasite": false
 }
 ```
 
-Now `skill-router route "implement auth"` will automatically use the `build` set and scan your project's skill directories.
+Now `skill-router route "implement auth"` will automatically use the `build` set, only ever route within `build` ∪ `review`, never suggest `obsolete-skill`, scan your project's skill directories — and the runtime enhancement layer is fully off for this project. Flip `"parasite": true` to re-enable it without touching any other project's setup.
 
 ### Environment Variable
 

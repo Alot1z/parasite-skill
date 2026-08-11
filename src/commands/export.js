@@ -98,7 +98,22 @@ export function cmdExport(args) {
   // ---- project config ------------------------------------------------------
   const project = loadProjectConfig();
   const projectInfo = project
-    ? { path: project._path.replace(/\\/g, "/"), sets: Object.keys(project.sets ?? {}) }
+    ? {
+        path: project._path.replace(/\\/g, "/"),
+        sets: Object.keys(project.sets ?? {}),
+        enabledSets: Array.isArray(project.enabledSets) ? project.enabledSets : [],
+        excludeSkills: Array.isArray(project.excludeSkills) ? project.excludeSkills : [],
+        parasite:
+          project.parasite === false
+            ? { enabled: false }
+            : project.parasite === true
+              ? { enabled: true }
+              : project.parasite && typeof project.parasite === "object"
+                ? project.parasite
+                : null,
+        envKeys: project.env && typeof project.env === "object" ? Object.keys(project.env) : [],
+        clients: Array.isArray(project.clients) ? project.clients : [],
+      }
     : null;
 
   // ---- LLM-ready JSON ------------------------------------------------------
@@ -183,7 +198,23 @@ export function cmdExport(args) {
   md.push("## Rules & Configs (existence only)", "");
   if (globalRules.length) md.push("### Global", "", ...globalRules.map((p) => `- ${p}`), "");
   if (perClientRules.length) md.push("### Per-client skill installs", "", ...perClientRules.map((p) => `- ${p}`), "");
-  if (projectInfo) md.push("### Project config", `- ${projectInfo.path} — sets: ${projectInfo.sets.join(", ") || "none"}`, "");
+  if (projectInfo) {
+    md.push("### Project config", `- ${projectInfo.path}`, "");
+    md.push(`  - sets: ${projectInfo.sets.join(", ") || "none"}`);
+    if (projectInfo.enabledSets.length) md.push(`  - enabledSets: ${projectInfo.enabledSets.join(", ")}`);
+    if (projectInfo.excludeSkills.length) md.push(`  - excludeSkills: ${projectInfo.excludeSkills.join(", ")}`);
+    if (projectInfo.parasite) {
+      const p = projectInfo.parasite;
+      let parasiteDesc = p.enabled === false ? "disabled" : "enabled";
+      if (p.enabled !== false && Array.isArray(p.clients) && p.clients.length) {
+        parasiteDesc += ` (clients: ${p.clients.join(", ")})`;
+      }
+      md.push(`  - parasite: ${parasiteDesc}`);
+    }
+    if (projectInfo.envKeys.length) md.push(`  - env: ${projectInfo.envKeys.join(", ")} (key names only)`);
+    if (projectInfo.clients.length) md.push(`  - clients: ${projectInfo.clients.join(", ")}`);
+    md.push("");
+  }
   if (!globalRules.length && !perClientRules.length && !projectInfo) md.push("None found.", "");
 
   writeFileSync(join(reg, "ECOSYSTEM.md"), md.join("\n"));

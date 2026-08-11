@@ -18,6 +18,26 @@ import { banner, smallLogo } from "../logo.js";
  */
 export function cmdParasite(args) {
   console.log(banner());
+
+  // Per-project parasite control from skill-router.json (merged into args):
+  //  - "parasite": false                -> injections disabled for this project
+  //  - "parasite": { enabled, clients } -> restrict which clients are touched
+  //  - "clients": [...]                 -> project-wide client allowlist
+  const parasiteCfg = args.parasite;
+  if (parasiteCfg && parasiteCfg.enabled === false) {
+    if (!args.add && !args.remove && !args.toggle && !args.hook && !args.wrap && !args.protect) {
+      console.log('');
+      console.log('  ⛔ parasite is disabled for this project (skill-router.json: "parasite": false)');
+      console.log('');
+      return 0;
+    }
+    console.error('parasite is disabled for this project (skill-router.json). Set "parasite": true to re-enable.');
+    return 1;
+  }
+  const allowedClients = new Set(
+    (Array.isArray(parasiteCfg?.clients) ? parasiteCfg.clients : [])
+      .concat(Array.isArray(args.clients) ? args.clients : []),
+  );
   
   // List all injections
   if (args.status || (!args.add && !args.remove && !args.toggle && !args.hook && !args.wrap && !args.protect)) {
@@ -25,6 +45,7 @@ export function cmdParasite(args) {
     const status = getInjectionStatus();
     
     for (const s of status) {
+      if (allowedClients.size && !allowedClients.has(s.client)) continue;
       const mark = s.active > 0 ? "●" : "○";
       console.log(`  ${mark} ${s.label}: ${s.active}/${s.injections} active`);
       if (s.injections > 0) {
@@ -36,8 +57,18 @@ export function cmdParasite(args) {
   }
   
   // Add injection
+  const guardClient = (clientId) => {
+    if (allowedClients.size && !allowedClients.has(clientId)) {
+      console.error('client "' + clientId + '" is not in this project. allowed clients (skill-router.json)');
+      console.error('allowed: ' + [...allowedClients].join(", "));
+      return true;
+    }
+    return false;
+  };
+
   if (args.add) {
     const clientId = args.agent || "universal";
+    if (guardClient(clientId)) return 1;
     const client = CLIENTS.find(c => c.id === clientId);
     
     if (!client) {
@@ -70,6 +101,7 @@ export function cmdParasite(args) {
   // Remove injection
   if (args.remove) {
     const clientId = args.agent || "universal";
+    if (guardClient(clientId)) return 1;
     const client = CLIENTS.find(c => c.id === clientId);
     
     if (!client) {
@@ -90,6 +122,7 @@ export function cmdParasite(args) {
   // Toggle injection
   if (args.toggle) {
     const clientId = args.agent || "universal";
+    if (guardClient(clientId)) return 1;
     const client = CLIENTS.find(c => c.id === clientId);
     
     if (!client) {
@@ -111,7 +144,7 @@ export function cmdParasite(args) {
   // Generate build hook
   if (args.hook) {
     const format = args.format || "vite";
-    const hookCode = generateBuildHook({ format });
+    const hookCode = generateBuildHook({ format, env: args.env });
     
     const outPath = args.out || `skill-router-parasite-${format}.js`;
     writeFileSync(outPath, hookCode);
@@ -123,7 +156,7 @@ export function cmdParasite(args) {
   // Generate server wrapper
   if (args.wrap) {
     const serverPath = args.server || "./upstream-server.js";
-    const wrapperCode = generateServerWrapper({ serverPath });
+    const wrapperCode = generateServerWrapper({ serverPath, env: args.env });
     
     const outPath = args.out || "parasite-wrapped-server.js";
     writeFileSync(outPath, wrapperCode);
