@@ -48,11 +48,20 @@ the main LLM can invoke directly:
 
 ```bash
 parasite-skill tools list
+parasite-skill tools list --skill "demo*" --risk medium   # filtered inventory
 parasite-skill tools describe <name>
 parasite-skill tools run <name> --args "some args"
 parasite-skill tools run-batch a,b,c --args "..."  # sequential run, shared ledger
+parasite-skill tools run-batch a,b,c --dry-run     # preview the whole batch
 parasite-skill tools docs                          # generate registry/TOOLS.md
 ```
+
+`tools list` accepts `--skill G` (glob-filter by owning skill) and `--risk X`
+(only tools at or above a `low`/`medium`/`high` static-audit risk), so you can
+answer "which dangerous tools does this skill expose?" without scanning the
+whole inventory. `tools run-batch --dry-run` resolves and policy-checks every
+tool in the batch and prints the exact commands — nothing executes and the
+ledger stays untouched.
 
 Tool names are `<skill>__<asset>` (for example `parasite-skill__conductor`).
 Python, JavaScript, and shell assets are discovered automatically. Execution
@@ -97,11 +106,16 @@ tools: |
   {
     "demo-skill__inspect": {
       "description": "Inspect the failing test output",
-      "argsSchema": { "type": "object", "properties": { "args": { "type": "string" } } }
+      "argsSchema": { "type": "object", "properties": { "args": { "type": "string" } } },
+      "timeoutMs": 5000
     }
   }
 ---
 ```
+
+A per-tool `timeoutMs` (>= 1000) becomes that tool's execution default; an
+explicit `--timeout-ms` or the project `tools.timeoutMs` still wins, and the
+declared value is shown in `describe` and `TOOLS.md`.
 
 `tools audit` reads each asset statically (never executes it) and flags code
 execution, network, secrets-read, and destructive patterns as `high`/`medium`/
@@ -176,7 +190,9 @@ skills' script tools, asserts the profile's guardrails, and saves a report to
 the registry (`agents/<profile>-<request>.md` + `.json`). Run every profile
 once with `agents run --all "<request>"` — tool execution is deduplicated
 across profiles and a combined report is written to `agents/all-<request>.md`
-+ `.json`. Inspect profiles without running anything:
++ `.json`. Narrow `--all` to a subset with `--profiles a,b`, and gate real
+runs with `--min-tools N` (exit 1 when fewer than N tools succeeded — useful in
+CI; the gate applies to executed runs, not `--dry-run` previews):
 
 ```bash
 parasite-skill agents list          # inventory all profiles
@@ -283,7 +299,10 @@ Local endpoints are allowed by default. External HTTPS endpoints require `--allo
 When the registry contains runnable skill tools, `llm` exposes them to the
 model as native functions and executes the tool calls it makes, feeding the
 redacted results back in a loop (max `--max-tool-calls` iterations, default 8)
-until the model produces a final answer. Disable with `--no-tools`.
+until the model produces a final answer. Disable with `--no-tools`. Add
+`--tool-dry-run` to preview the model's tool calls instead: each requested tool
+is resolved and reported as the exact command that *would* run, but nothing is
+ever executed or recorded.
 
 Freebuff history recovery is explicit:
 

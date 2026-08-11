@@ -112,6 +112,10 @@ export function listSkillTools(payload) {
         command,
         description: typeof meta.description === "string" && meta.description.trim() ? meta.description.trim() : describeTool(abs, asset.path),
         ...(meta.argsSchema && typeof meta.argsSchema === "object" ? { argsSchema: meta.argsSchema } : {}),
+        // A skill may declare a per-tool timeout (>= 1000ms) in its tools:
+        // frontmatter block; an explicit CLI --timeout-ms or project
+        // tools.timeoutMs still wins in resolveToolRun.
+        ...(typeof meta.timeoutMs === "number" && meta.timeoutMs >= 1000 ? { timeoutMs: meta.timeoutMs } : {}),
       });
     }
   }
@@ -305,7 +309,9 @@ export function resolveToolRun(payload, name, args = "", options = {}) {
       ? Object.entries(validated).sort((a, b) => a[0].localeCompare(b[0])).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
       : String(args ?? "").split(/\s+/).filter(Boolean);
   const argv = [script, ...argvArgs];
-  const timeoutMs = Math.max(1000, Math.min(Number(options.timeoutMs) || 30_000, 300_000));
+  // Timeout precedence: explicit CLI/project timeout wins, then a per-tool
+  // declared timeoutMs from the skill's tools: frontmatter block, then 30s.
+  const timeoutMs = Math.max(1000, Math.min(Number(options.timeoutMs) || tool.timeoutMs || 30_000, 300_000));
   return {
     tool,
     script,
@@ -460,6 +466,7 @@ export function renderToolsDocs(payload, policy) {
       `- Script: \`${tool.path}\``,
       `- Description: ${esc(tool.description)}`,
       ...(tool.argsSchema ? [`- Args schema: \`${JSON.stringify(tool.argsSchema)}\``] : []),
+      ...(tool.timeoutMs ? [`- Declared timeout: ${tool.timeoutMs}ms`] : []),
       "",
     ]).flat(),
   ];

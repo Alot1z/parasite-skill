@@ -80,7 +80,11 @@ TOOLS FLAGS
   --clear-scoped       tools policy: remove the --scoped key
   --drop-policy        tools policy: remove the whole tools block
   --policy-file PATH   tools policy: target a specific config file
+  --skill G        tools list: filter tools by skill name glob
+  --risk X         tools list: only tools at/above low|medium|high audit risk
   --max-tools N    agents run: cap the number of script tools executed
+  --profiles a,b   agents run --all: run only these profiles
+  --min-tools N    agents run: exit 1 when fewer than N tools succeeded
   --threshold X    tools audit: gate on low|medium|high risk
   --clear          tools history: clear the run ledger
   --limit N        tools history: how many ledger entries to show
@@ -92,6 +96,7 @@ TOOLS FLAGS
   --write-baseline tools audit: seed the risk baseline file
   --env-filter a,b Tool env allowlist (only these env keys reach tool processes)
   --no-tools       llm: do not expose skill tools as functions
+  --tool-dry-run   llm: preview the model's tool calls, never execute them
   --max-tool-calls N  llm: max tool-calling loop iterations (default 8)
 
 LLM FLAGS
@@ -136,6 +141,11 @@ FLAGS
   --max-response-chars N Bound returned text
   --api-key KEY           Prefer PARASITE_SKILL_LLM_API_KEY instead
   --allow-remote          Permit external HTTPS endpoints; local-only by default
+  --no-tools              Do not expose skill tools as functions
+  --tool-dry-run          Preview tool calls: the model's tool requests are
+                          resolved and reported as would-run commands, but
+                          nothing is ever executed or recorded
+  --max-tool-calls N      Max tool-calling loop iterations (default 8)
 
 SAFETY
   No model call occurs unless this command is explicitly invoked. Full skill files,
@@ -205,8 +215,10 @@ FLAGS
   --json-args JSON Structured args validated against the tool's argsSchema
   --names a,b,c    Tool names for run-batch
   --continue       run-batch: continue after a failed tool
+  --skill G        list: filter by skill name glob
+  --risk X         list: only tools at/above low|medium|high audit risk
   --tool-env K=V,K=V  Inline env overrides for this run
-  --dry-run        Preview without executing (policy)
+  --dry-run        Preview without executing (policy); run-batch: preview the batch
   --timeout-ms N   Execution timeout (default 30000, cap 300000)
   --threshold X    audit gate on low|medium|high
   --baseline       audit: diff against the persisted risk baseline
@@ -224,8 +236,9 @@ POLICY
   "timeoutMs": N, "scoped": { "profile:<name>": {...}, "sets:<set>": {...} } }
   restricts which tools run, which env keys reach them, and the timeout.
   Deny wins; a non-empty allow list must match. Tool names support * globs.
-  Skills can declare per-tool description/argsSchema via a "tools": JSON block
-  in their SKILL.md frontmatter.
+  Skills can declare per-tool description/argsSchema/timeoutMs via a "tools":
+  JSON block in their SKILL.md frontmatter (an explicit --timeout-ms or project
+  tools.timeoutMs still wins over a declared per-tool timeout).
 
   Edit it from the CLI (writes parasite-skill.json, --dry-run to preview):
     tools policy --allow "a__*" --deny "b__*" --env PATH --policy-timeout-ms 60000
@@ -368,6 +381,11 @@ export function parseFlags(argv) {
       case "--strict": flags.strict = true; break;
       case "--baseline": flags.baseline = true; break;
       case "--write-baseline": flags.writeBaseline = true; break;
+      case "--skill": { const v = value(++i, a); if (v !== undefined) flags.listSkill = v; break; }
+      case "--risk": { const v = value(++i, a); if (v !== undefined) flags.listRisk = v; break; }
+      case "--profiles": { const v = value(++i, a); if (v !== undefined) flags.profiles = v; break; }
+      case "--min-tools": { const v = value(++i, a); if (v !== undefined) flags.minTools = num(v); break; }
+      case "--tool-dry-run": flags.toolDryRun = true; break;
       case "--history-name": { const v = value(++i, a); if (v !== undefined) flags.historyName = v; break; }
       case "--history-skill": { const v = value(++i, a); if (v !== undefined) flags.historySkill = v; break; }
       case "--history-status": { const v = value(++i, a); if (v !== undefined) flags.historyStatus = v; break; }

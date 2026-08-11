@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scan, composePayload, mergeConfig } from "../src/engine.js";
-import { auditSkillTools, filterToolsByPolicy, listSkillTools, policyFor, readToolRuns, runSkillTool, validateToolArgs } from "../src/ai-tools.js";
+import { auditSkillTools, filterToolsByPolicy, listSkillTools, policyFor, readToolRuns, resolveToolRun, runSkillTool, validateToolArgs } from "../src/ai-tools.js";
 import { cmdTools } from "../src/commands/tools.js";
 import { cmdAgentsRun } from "../src/commands/agents-run.js";
 import { cmdAgentsList } from "../src/commands/agents-list.js";
@@ -496,7 +496,7 @@ describe("agents run --all", () => {
     console.log = (...a) => out.push(a.join(" "));
     try {
       expect(cmdAgentsRun({ registry, dirs, all: true, _: ["agents", "run", "--all", "debug", "failing", "tests"], maxTools: 2 })).toBe(0);
-      expect(out.join("\n")).toContain("all 6 profiles");
+      expect(out.join("\n")).toContain("6 profiles");
       const reports = readdirSync(join(registry, "agents"));
       const json = reports.find((name) => name.startsWith("all-"));
       const combined = JSON.parse(readFileSync(join(registry, "agents", json as string), "utf-8"));
@@ -1099,6 +1099,149 @@ describe("tools run-batch json-args map and refs tools section", () => {
   });
 });
 
+describe("tools list filters and run-batch dry-run", () => {
+  test("tools list --skill and --risk filter the inventory", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+      "risky-skill/SKILL.md": "---\nname: risky-skill\ndescription: Risky tooling.\n---\n",
+      "risky-skill/scripts/danger.py": "import os\nos.system('curl http://x')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "list", listSkill: "demo-*" })).toBe(0);
+      const skillText = out.join("\n");
+      expect(skillText).toContain("demo-skill__hello");
+      expect(skillText).not.toContain("risky-skill__danger");
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "list", listRisk: "high" })).toBe(0);
+      const riskText = out.join("\n");
+      expect(riskText).toContain("risky-skill__danger");
+      expect(riskText).not.toContain("demo-skill__hello");
+      out.length = 0;
+      const origErr = console.error;
+      console.error = (...a) => out.push(a.join(" "));
+      expect(cmdTools({ registry, dirs, toolsAction: "list", listRisk: "bogus" })).toBe(1);
+      expect(out.join("\n")).toContain("--risk must be one of");
+      console.error = origErr;
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("tools run-batch --dry-run previews the batch without executing or recording", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/marker.py": "open('marker.txt','w').write('ran')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "run-batch", names: "demo-skill__marker", dryRun: true })).toBe(0);
+      const text = out.join("\n");
+      expect(text).toContain("batch dry-run");
+      expect(text).toContain("demo-skill__marker");
+      expect(text).toContain("ledger untouched");
+      expect(existsSync(join(dirs, "demo-skill", "marker.txt"))).toBe(false);
+      expect(readToolRuns(registry)).toHaveLength(0);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("tools run-batch --dry-run reports policy-blocked tools and exits 1", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "run-batch", names: "demo-skill__hello", dryRun: true, tools: { deny: ["demo-skill__*"] } })).toBe(1);
+      expect(out.join("\n")).toContain("blocked");
+      expect(readToolRuns(registry)).toHaveLength(0);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("tools run-batch --dry-run mirrors the real run's timeout and exit codes", () => {
+    const { dirs, registry } = tempSkills({
+      "meta-skill/SKILL.md": [
+        "---",
+        "name: meta-skill",
+        "description: Tool metadata.",
+        "tools: |",
+        '  {"meta-skill__echo": { "argsSchema": { "type": "object", "properties": { "port": { "type": "integer" } }, "required": ["port"] } }}',
+        "---",
+        "",
+      ].join("\n"),
+      "meta-skill/scripts/echo.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // Invalid args in the batch dry-run: exit 3 (matches tools dry-run).
+      const origErr = console.error;
+      console.error = (...a) => out.push(a.join(" "));
+      expect(cmdTools({ registry, dirs, toolsAction: "run-batch", names: "meta-skill__echo", dryRun: true, jsonArgs: '{"meta-skill__echo": {}}' })).toBe(3);
+      expect(out.join("\n")).toContain("missing required arg");
+      console.error = origErr;
+      // The preview reflects the configured timeout.
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "run-batch", names: "meta-skill__echo", dryRun: true, jsonArgs: '{"meta-skill__echo": {"port": 8080}}', timeoutMs: 45000 })).toBe(0);
+      expect(out.join("\n")).toContain("timeout 45000ms");
+      expect(readToolRuns(registry)).toHaveLength(0);
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("per-tool declared timeoutMs", () => {
+  test("resolveToolRun honors a declared per-tool timeout and CLI still wins", () => {
+    const { dirs } = tempSkills({
+      "meta-skill/SKILL.md": [
+        "---",
+        "name: meta-skill",
+        "description: Tool metadata.",
+        "tools: |",
+        '  {"meta-skill__hello": { "timeoutMs": 5000 }}',
+        "---",
+        "",
+      ].join("\n"),
+      "meta-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const payload = scan([dirs]);
+    const tool = listSkillTools(payload).find((entry) => entry.name === "meta-skill__hello");
+    expect(tool.timeoutMs).toBe(5000);
+    const declared = resolveToolRun(payload, "meta-skill__hello");
+    expect(declared.timeoutMs).toBe(5000);
+    const overridden = resolveToolRun(payload, "meta-skill__hello", "", { timeoutMs: 90000 });
+    expect(overridden.timeoutMs).toBe(90000);
+    // A declared timeout under the 1000ms floor is ignored.
+    const { dirs: dirs2 } = tempSkills({
+      "meta2-skill/SKILL.md": [
+        "---",
+        "name: meta2-skill",
+        "description: Tool metadata.",
+        "tools: |",
+        '  {"meta2-skill__hello": { "timeoutMs": 5 }}',
+        "---",
+        "",
+      ].join("\n"),
+      "meta2-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const tool2 = listSkillTools(scan([dirs2])).find((entry) => entry.name === "meta2-skill__hello");
+    expect(tool2.timeoutMs).toBeUndefined();
+  });
+});
+
 describe("compose per-skill tools and agents strict", () => {
   test("composePayload lists callable tools per selected skill matching listSkillTools", () => {
     const { dirs } = tempSkills({
@@ -1168,6 +1311,87 @@ describe("compose per-skill tools and agents strict", () => {
       expect(readToolRuns(registry)).toHaveLength(0);
       // Strict: blocked tools become a hard failure.
       expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], dryRun: true, maxTools: 4, tools: policy, strict: true })).toBe(2);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("llm --tool-dry-run previews tool calls without executing them", async () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/marker.py": "open('marker.txt','w').write('ran')\n",
+    });
+    const originalFetch = globalThis.fetch;
+    const bodies: any[] = [];
+    let calls = 0;
+    globalThis.fetch = async (_url: any, options: any) => {
+      const body = JSON.parse(options.body);
+      bodies.push(body);
+      calls++;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "", tool_calls: [{ id: "call-1", type: "function", function: { name: "demo-skill__marker", arguments: "{}" } }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "final grounded answer" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(await cmdLlm({ request: "debug failing tests", endpoint: "http://localhost:1234/v1", model: "test-model", registry, dirs, maxChars: 200, toolDryRun: true })).toBe(0);
+      expect(out.join("\n")).toContain("final grounded answer");
+      expect(bodies.length).toBe(2);
+      const toolMsg = bodies[1].messages.find((m: any) => m.role === "tool");
+      expect(toolMsg).toBeTruthy();
+      expect(toolMsg.content).toContain("[dry-run] would execute");
+      // The tool script never ran and the ledger is untouched.
+      expect(existsSync(join(dirs, "demo-skill", "marker.txt"))).toBe(false);
+      expect(readToolRuns(registry)).toHaveLength(0);
+    } finally {
+      console.log = orig;
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("agents run --all --profiles runs only the named subset", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/inspect.py": "import sys\nprint('inspected: ' + ' '.join(sys.argv[1:]))\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdAgentsRun({ registry, dirs, all: true, profiles: "ecosystem-architect,release-engineer", _: ["agents", "run", "--all", "debug", "failing", "tests"], maxTools: 2 })).toBe(0);
+      expect(out.join("\n")).toContain("2 profiles");
+      const reports = readdirSync(join(registry, "agents"));
+      const json = reports.find((name) => name.startsWith("all-"));
+      const combined = JSON.parse(readFileSync(join(registry, "agents", json as string), "utf-8"));
+      expect(combined.profiles).toBe(2);
+      const names = combined.reports.map((report: { profile: string }) => report.profile).sort();
+      expect(names).toEqual(["ecosystem-architect", "release-engineer"]);
+      // Unknown profile is a hard error.
+      expect(cmdAgentsRun({ registry, dirs, all: true, profiles: "nope", _: ["agents", "run", "--all", "debug", "failing", "tests"] })).toBe(1);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("agents run --min-tools gates on the number of successful tools", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/inspect.py": "import sys\nprint('inspected')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], maxTools: 4 })).toBe(0);
+      out.length = 0;
+      const origErr = console.error;
+      console.error = (...a) => out.push(a.join(" "));
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], maxTools: 4, minTools: 5 })).toBe(1);
+      expect(out.join("\n")).toContain("--min-tools 5 not met");
+      console.error = origErr;
     } finally {
       console.log = orig;
     }

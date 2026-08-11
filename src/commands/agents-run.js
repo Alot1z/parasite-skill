@@ -126,8 +126,19 @@ export function cmdAgentsRun(args = {}) {
       console.error('agents run --all requires a request: parasite-skill agents run --all "<request>"');
       return 1;
     }
+    // --profiles a,b runs only the named subset of profiles.
+    let profileNames = Object.keys(AGENT_PROFILES);
+    if (args.profiles) {
+      profileNames = String(args.profiles).split(",").map((name) => name.trim()).filter(Boolean);
+      const unknown = profileNames.filter((name) => !AGENT_PROFILES[name]);
+      if (unknown.length) {
+        console.error(`unknown profile(s): ${unknown.join(", ")}. available: ${Object.keys(AGENT_PROFILES).join(", ")}`);
+        return 1;
+      }
+    }
+    const allProfiles = !args.profiles;
     const ranTools = new Set();
-    const reports = Object.keys(AGENT_PROFILES).map((name) =>
+    const reports = profileNames.map((name) =>
       runProfile(name, request, { payload, sets, reg, policyConfig: policy, maxTools: args.maxTools, timeoutMs: args.timeoutMs, maxChars: args.maxChars, top: args.top, excludeSkills: args.excludeSkills, ranTools, dryRun: args.dryRun }),
     );
     if (args.dryRun) {
@@ -211,12 +222,16 @@ export function cmdAgentsRun(args = {}) {
       ]).flat(),
       `Report: ${base}.json`,
     ];
-    writeFileSync(join(dir, `${base}.md`), md.join("\n") + "\n", "utf-8");
-    console.log(`${smallLogo()} agent run: all ${combined.profiles} profiles`);
+    writeFileSync(join(dir, `${base}.md`), md.join("\n") + "\n", "utf-8");      console.log(`${smallLogo()} agent run: ${allProfiles ? "all " : ""}${combined.profiles} profile${combined.profiles === 1 ? "" : "s"}`);
     console.log(`  request: ${request}`);
     console.log(`  tools: ${combined.successful_tools}/${combined.total_tools} succeeded (deduped across profiles)`);
     console.log(`  report: ${fmt(join(dir, `${base}.md`))}`);
     if (args.strict === true && reports.some((report) => report.runs.some((run) => run.blocked))) return 2;
+    // --min-tools N gates on the number of successful tool runs (CI check).
+    if (args.minTools != null && combined.successful_tools < Number(args.minTools)) {
+      console.error(`--min-tools ${args.minTools} not met: ${combined.successful_tools} successful tool runs`);
+      return 1;
+    }
     return 0;
   }
 
@@ -332,5 +347,13 @@ export function cmdAgentsRun(args = {}) {
   // --strict turns policy-blocked tools into a hard failure (exit 2), so CI
   // and scripted callers can treat a partially-blocked agent run as a gate.
   if (args.strict === true && report.runs.some((run) => run.blocked)) return 2;
+  // --min-tools N gates on the number of successful tool runs.
+  if (args.minTools != null) {
+    const okCount = report.tool_runs.filter((run) => run.ok).length;
+    if (okCount < Number(args.minTools)) {
+      console.error(`--min-tools ${args.minTools} not met: ${okCount} successful tool runs`);
+      return 1;
+    }
+  }
   return 0;
 }

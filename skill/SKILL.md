@@ -55,7 +55,8 @@ parasite-skill export
 parasite-skill link [--unlink]
 parasite-skill mcp add|remove|list
 parasite-skill tools list|describe|run <name> [--args STR] [--timeout-ms N]
-parasite-skill tools run-batch a,b,c [--args STR] [--continue]
+parasite-skill tools list --skill "demo*" --risk medium   # filtered inventory
+parasite-skill tools run-batch a,b,c [--args STR] [--continue] [--dry-run]
 parasite-skill tools run <name> --json-args '{"port": 8080}'  # schema-validated
 parasite-skill tools dry-run <name> [--args STR]   # preview, never execute
 parasite-skill tools audit [--threshold high]      # static risk scan
@@ -65,8 +66,9 @@ parasite-skill tools docs                         # generate registry/TOOLS.md
 parasite-skill tools policy --allow "a__*" --deny "b__*" [--dry-run]
 parasite-skill tools history [--clear] [--name G] [--skill G] [--status ok|fail]
 parasite-skill agents list|show <profile>          # inspect profiles, no run
-parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run] [--strict]
-parasite-skill agents run --all "<request>"        # every profile once
+parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run] [--strict] [--min-tools N]
+parasite-skill agents run --all "<request>" [--profiles a,b]   # all or a subset
+parasite-skill llm "<request>" [--tool-dry-run]   # preview tool calls, never execute
 parasite-skill plan "<request>" --auto   # auto-max: pin the always-on cadence
 ```
 
@@ -80,10 +82,15 @@ alone. The `parasite-skill.json` `tools` block (`allow`/`deny`/`env`,
 run and which environment keys reach them; skills may declare per-tool
 `description`/`argsSchema` via a `tools:` JSON block in their frontmatter,
 and `--json-args` validates structured arguments against that schema before
-execution (exit 3 on invalid). `tools policy` edits the gate from the CLI.
-`agents run --dry-run` previews every command a profile would run without
-executing and writes `agents/<profile>-<request>.dryrun.md` + `.json` preview
-reports; `--strict` turns any policy-blocked tool into a hard failure (exit 2).
+execution (exit 3 on invalid); a per-tool `timeoutMs` may also be declared in
+the block (an explicit `--timeout-ms` or project `tools.timeoutMs` still wins).
+`tools policy` edits the gate from the CLI. `tools list --skill/--risk` filters
+the inventory; `tools run-batch --dry-run` previews a whole batch without
+executing. `agents run --dry-run` previews every command a profile would run
+without executing and writes `agents/<profile>-<request>.dryrun.md` + `.json`
+preview reports; `--strict` turns any policy-blocked tool into a hard failure
+(exit 2); `--min-tools N` gates on success count and `--all --profiles a,b`
+runs a subset.
 `tools audit --write-baseline` persists expected per-tool risk and
 `--baseline` exits 1 on drift/regression; `tools verify` checks scripts,
 policy, and schema shape (exit 1 when broken); `tools history` filters the

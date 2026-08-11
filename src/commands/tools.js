@@ -46,7 +46,22 @@ export function cmdTools(args = {}) {
   const { sub, tail } = actionArgs(args);
 
   if (sub === "list") {
-    const tools = filterToolsByPolicy(listSkillTools(payload), policy);
+    let tools = filterToolsByPolicy(listSkillTools(payload), policy);
+    const riskLevels = ["low", "medium", "high"];
+    if (args.listSkill) {
+      const pattern = globToRegExp(args.listSkill);
+      tools = tools.filter((tool) => pattern.test(tool.skill));
+    }
+    if (args.listRisk) {
+      const minIndex = riskLevels.indexOf(args.listRisk);
+      if (minIndex < 0) {
+        console.error("--risk must be one of low|medium|high");
+        return 1;
+      }
+      // Join the static audit so the caller can see only tools at/above a risk.
+      const riskByName = new Map(auditSkillTools(payload).map((entry) => [entry.name, entry.risk]));
+      tools = tools.filter((tool) => riskLevels.indexOf(riskByName.get(tool.name) ?? "low") >= minIndex);
+    }
     if (args.json) {
       console.log(JSON.stringify(tools, null, 2));
     } else {
@@ -381,6 +396,47 @@ export function cmdTools(args = {}) {
       typeof parsedBatchArgs === "object" &&
       !Array.isArray(parsedBatchArgs) &&
       names.some((name) => name in parsedBatchArgs);
+
+    // --dry-run previews the whole batch: resolve + policy-check every tool,
+    // print the exact commands, execute nothing, and never touch the ledger.
+    // Exit codes mirror the real run: 1 on any failure, 3 on invalid args.
+    if (args.dryRun) {
+      const previews = [];
+      let failCount = 0;
+      let invalidArgs = 0;
+      for (const name of names) {
+        const jsonArgsForTool = isMap ? parsedBatchArgs[name] : parsedBatchArgs;
+        try {
+          const resolved = resolveToolRun(payload, name, toolArgs, {
+            timeoutMs,
+            policy,
+            ...(jsonArgsForTool !== undefined ? { jsonArgs: jsonArgsForTool } : {}),
+          });
+          previews.push({ ok: true, name, command: resolved.tool.command, argv: resolved.argv.map(String), cwd: resolved.cwd, timeout_ms: resolved.timeoutMs });
+        } catch (err) {
+          const blocked = err.code === "TOOL_DENIED" || err.code === "TOOL_NOT_ALLOWED";
+          const invalid = err.code === "ARGS_INVALID";
+          if (blocked || invalid) failCount++;
+          if (invalid) invalidArgs++;
+          previews.push({ ok: false, name, blocked, status: invalid ? 3 : 2, stderr: String(err.message ?? err) });
+        }
+      }
+      if (args.json) {
+        console.log(JSON.stringify({ count: previews.length, dry_run: true, previews }, null, 2));
+      } else {
+        console.log(`batch dry-run: ${names.length} tools (nothing executed)`);
+        for (const preview of previews) {
+          if (preview.ok) {
+            console.log(`  ${preview.name}: ${preview.command} ${preview.argv.slice(1).join(" ").slice(0, 120)} (cwd ${preview.cwd}, timeout ${preview.timeout_ms}ms)`);
+          } else {
+            console.log(`  ${preview.name}: ${preview.blocked ? "blocked" : "error"} — ${preview.stderr}`);
+          }
+        }
+        console.log("  ledger untouched");
+      }
+      return invalidArgs ? 3 : failCount ? 1 : 0;
+    }
+
     const results = [];
     let code = 0;
     for (const name of names) {
