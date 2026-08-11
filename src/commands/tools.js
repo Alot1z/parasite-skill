@@ -249,6 +249,9 @@ export function cmdTools(args = {}) {
     }
     if (args.historyStatus === "ok") entries = entries.filter((entry) => entry.status === 0);
     if (args.historyStatus === "fail") entries = entries.filter((entry) => entry.status !== 0);
+    // Time-window filters compare ISO timestamps lexicographically.
+    if (args.historySince) entries = entries.filter((entry) => String(entry.ts) >= String(args.historySince));
+    if (args.historyUntil) entries = entries.filter((entry) => String(entry.ts) <= String(args.historyUntil));
     entries = entries.slice(0, limit);
     if (args.json) {
       console.log(JSON.stringify({ count: entries.length, entries }, null, 2));

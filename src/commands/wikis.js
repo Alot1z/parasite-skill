@@ -49,8 +49,21 @@ export function cmdWikis(args) {
   const byTag = {};
   for (const s of skills) for (const t of s.tags) (byTag[t] ??= []).push(s.name);
 
-  const skillsMd = ["# All Skills", "", `${skills.length} registered`, "", "| Skill | Tags | Languages | Spec |", "|---|---|---|---|"];
-  for (const s of skills) skillsMd.push(`| [${s.name}](skills/${s.name}/index.md) | ${s.tags.join(", ")} | ${s.languages.join(", ") || "-"} | ${s.spec_ok ? "ok" : "ISSUE"} |`);
+  // Per-skill callable AI-tools (mirrors refs): the Skills index and each
+  // per-skill page list the executable surface next to the readable one.
+  const toolsBySkill = new Map();
+  for (const tool of listSkillTools(payload)) {
+    const list = toolsBySkill.get(tool.skill) ?? [];
+    list.push(tool);
+    toolsBySkill.set(tool.skill, list);
+  }
+  const toolsCell = (name) => {
+    const list = toolsBySkill.get(name) ?? [];
+    return list.length ? list.map((tool) => `\`${tool.name}\``).join(", ") : "-";
+  };
+
+  const skillsMd = ["# All Skills", "", `${skills.length} registered`, "", "| Skill | Tags | Languages | Spec | AI-Tools |", "|---|---|---|---|---|"];
+  for (const s of skills) skillsMd.push(`| [${s.name}](skills/${s.name}/index.md) | ${s.tags.join(", ")} | ${s.languages.join(", ") || "-"} | ${s.spec_ok ? "ok" : "ISSUE"} | ${toolsCell(s.name)} |`);
   writeFileSync(join(wiki, "Skills.md"), skillsMd.join("\n"));
 
   const cats = ["# Categories", ""];
@@ -109,7 +122,15 @@ export function cmdWikis(args) {
     const memberSets = Object.entries(sets).filter(([, set]) => set.members.includes(s.name)).map(([n]) => n);
     const related = [...new Set(s.tags.flatMap((t) => byTag[t] ?? []).filter((t) => t !== s.name))].sort().slice(0, 12).join(", ") || "none";
     const description = args.public ? publicText(s.description) : s.description;
-    const page = tpl.replaceAll("{{name}}", s.name).replaceAll("{{description}}", description).replaceAll("{{tags}}", s.tags.join(", ")).replaceAll("{{languages}}", s.languages.join(", ") || "none").replaceAll("{{sets}}", memberSets.join(", ") || "none").replaceAll("{{related}}", related);
+    const toolsMd = (toolsBySkill.get(s.name) ?? []).map((tool) => `- \`${tool.name}\` (${tool.language}${tool.argsSchema ? ", schema" : ""}) — ${tool.description.slice(0, 100)}`).join("\n") || "- none";
+    const page = tpl
+      .replaceAll("{{name}}", s.name)
+      .replaceAll("{{description}}", description)
+      .replaceAll("{{tags}}", s.tags.join(", "))
+      .replaceAll("{{languages}}", s.languages.join(", ") || "none")
+      .replaceAll("{{sets}}", memberSets.join(", ") || "none")
+      .replaceAll("{{tools}}", toolsMd)
+      .replaceAll("{{related}}", related);
     const d = join(per, s.name);
     mkdirSync(d, { recursive: true });
     writeFileSync(join(d, "index.md"), page);

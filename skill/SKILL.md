@@ -49,6 +49,7 @@ parasite-skill llm "<request>" [--endpoint URL] [--model NAME]
 parasite-skill history discover|import [--file PATH]
 parasite-skill route "<idea>" [--top N] [--set NAME] [--json]
 parasite-skill validate [--json]
+parasite-skill doctor [--json]           # one-shot health check (exit 1 on failure)
 parasite-skill refs [--per-skill]
 parasite-skill wikis
 parasite-skill export
@@ -64,9 +65,9 @@ parasite-skill tools audit --baseline              # diff vs persisted baseline
 parasite-skill tools verify                       # readiness: scripts/policy/schemas
 parasite-skill tools docs                         # generate registry/TOOLS.md
 parasite-skill tools policy --allow "a__*" --deny "b__*" [--dry-run]
-parasite-skill tools history [--clear] [--name G] [--skill G] [--status ok|fail]
+parasite-skill tools history [--clear] [--name G] [--skill G] [--status ok|fail] [--since ISO] [--until ISO]
 parasite-skill agents list|show <profile>          # inspect profiles, no run
-parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run] [--strict] [--min-tools N]
+parasite-skill agents run <profile> "<request>" [--max-tools N] [--dry-run] [--strict] [--min-tools N] [--json]
 parasite-skill agents run --all "<request>" [--profiles a,b]   # all or a subset
 parasite-skill llm "<request>" [--tool-dry-run]   # preview tool calls, never execute
 parasite-skill plan "<request>" --auto   # auto-max: pin the always-on cadence
@@ -86,11 +87,15 @@ execution (exit 3 on invalid); a per-tool `timeoutMs` may also be declared in
 the block (an explicit `--timeout-ms` or project `tools.timeoutMs` still wins).
 `tools policy` edits the gate from the CLI. `tools list --skill/--risk` filters
 the inventory; `tools run-batch --dry-run` previews a whole batch without
-executing. `agents run --dry-run` previews every command a profile would run
-without executing and writes `agents/<profile>-<request>.dryrun.md` + `.json`
-preview reports; `--strict` turns any policy-blocked tool into a hard failure
-(exit 2); `--min-tools N` gates on success count and `--all --profiles a,b`
-runs a subset.
+executing.`agents run --dry-run` previews every command a profile would run without
+executing and writes `agents/<profile>-<request>.dryrun.md` + `.json` preview
+reports; `--strict` turns any policy-blocked tool into a hard failure
+(exit 2); `--min-tools N` gates on success count, `--all --profiles a,b`
+runs a subset, and `--json` prints the report to stdout for scripts/CI.
+`tools history --since/--until` filters the ledger by time window. `doctor`
+runs the same gates as CI in one command: spec validation, tool readiness,
+audit baseline, and project-config parse. `export` includes a `tools` array
+(name/skill/language/risk) so the AI layer knows the executable surface.
 `tools audit --write-baseline` persists expected per-tool risk and
 `--baseline` exits 1 on drift/regression; `tools verify` checks scripts,
 policy, and schema shape (exit 1 when broken); `tools history` filters the

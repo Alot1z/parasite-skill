@@ -14,7 +14,7 @@ import { getInjectionStatus } from "../parasite/index.js";
 import { mcpRegistrationStatus } from "../mcp-register.js";
 import { AGENT_PROFILES } from "../data/agent-profiles.js";
 import { buildEcosystemGraph } from "../ecosystem-graph.js";
-import { listSkillTools } from "../ai-tools.js";
+import { auditSkillTools, listSkillTools } from "../ai-tools.js";
 import { fmt } from "./_lib.js";
 
 // Rule/config files checked for existence only (no contents).
@@ -129,6 +129,18 @@ export function cmdExport(args) {
       }
     : null;
 
+  // ---- callable AI-tools inventory (names/risk only, no contents) ----------
+  const tools = listSkillTools(payload);
+  const riskByName = new Map(auditSkillTools(payload).map((entry) => [entry.name, entry.risk]));
+  const toolInventory = tools.map((tool) => ({
+    name: tool.name,
+    skill: tool.skill,
+    language: tool.language,
+    risk: riskByName.get(tool.name) ?? "low",
+    declared_timeout_ms: tool.timeoutMs ?? null,
+    args_schema: !!tool.argsSchema,
+  }));
+
   // ---- LLM-ready JSON ------------------------------------------------------
   const llm = {
     kind: "parasite-skill-ecosystem",
@@ -141,6 +153,7 @@ export function cmdExport(args) {
       extensions: extensions.reduce((n, e) => n + e.injections, 0),
       mcp_registered: mcp.filter((m) => m.registered).length,
       rule_files: globalRules.length,
+      callable_tools: toolInventory.length,
     },
     skills: skills.map((s) => ({
       name: s.name,
@@ -159,6 +172,7 @@ export function cmdExport(args) {
     mcp,
     rules: { global: globalRules, per_client: perClientRules },
     agents: AGENT_PROFILES,
+    tools: toolInventory,
     graph: buildEcosystemGraph({
       skills,
       sets,
@@ -192,6 +206,13 @@ export function cmdExport(args) {
     md.push(`| ${s.name} | ${s.tags.join(", ") || "-"} | ${s.languages.join(", ") || "-"} | ${s.spec_ok ? "ok" : "ISSUE"} | ${memberSets.join(", ") || "-"} |`);
   }
   md.push("");
+
+  md.push("## Callable AI-Tools", "", `| Tool | Skill | Language | Risk | Schema |`, `|---|---|---|---|---|`);
+  for (const tool of toolInventory) {
+    md.push(`| \`${tool.name}\` | ${tool.skill} | ${tool.language} | ${tool.risk} | ${tool.args_schema ? "yes" : "-"} |`);
+  }
+  if (!toolInventory.length) md.push("_No callable tools discovered._", "");
+  else md.push("");
 
   md.push("## Skill-Sets", "");
   for (const [name, set] of Object.entries(sets)) {

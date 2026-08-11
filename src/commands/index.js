@@ -19,3 +19,4 @@ export { cmdParasite } from "./parasite.js";
 export { cmdTools } from "./tools.js";
 export { cmdAgentsRun } from "./agents-run.js";
 export { cmdAgentsList } from "./agents-list.js";
+export { cmdDoctor } from "./doctor.js";

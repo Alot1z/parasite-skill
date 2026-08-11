@@ -296,6 +296,16 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
             print("[ -] none installed")
         return 0
 
+    def _declared_timeout_ms(skill: dict, name: str, path: str):
+        """Per-tool declared timeoutMs from the skill's tools: frontmatter block
+        (mirrors the JS twin's listSkillTools). Returns None when not declared."""
+        meta = skill.get("toolsMeta") or {}
+        entry = meta.get(name) or meta.get(path) or {}
+        timeout = entry.get("timeoutMs") if isinstance(entry, dict) else None
+        if isinstance(timeout, (int, float)) and timeout >= 1000:
+            return int(timeout)
+        return None
+
     def do_skill_tools_list():
         # Parity listing from the shared registry.json; the Python twin lists
         # tools but defers execution to the JavaScript twin / explicit CLI.
@@ -313,7 +323,11 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
                     continue
                 base = path.split("/")[-1].rsplit(".", 1)[0]
                 name = re.sub(r"[^a-z0-9_-]+", "_", f"{skill['name']}__{base}".lower()).strip("_")
-                tools.append({"name": name, "skill": skill["name"], "path": path, "language": asset.get("language") or command, "command": command, "description": base})
+                entry = {"name": name, "skill": skill["name"], "path": path, "language": asset.get("language") or command, "command": command, "description": base}
+                declared = _declared_timeout_ms(skill, name, path)
+                if declared is not None:
+                    entry["timeoutMs"] = declared
+                tools.append(entry)
         print(json.dumps(sorted(tools, key=lambda tool: tool["name"]), indent=2))
         return 0
 
@@ -417,7 +431,7 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
                     continue
                 base = path.split("/")[-1].rsplit(".", 1)[0]
                 tname = re.sub(r"[^a-z0-9_-]+", "_", f"{skill['name']}__{base}".lower()).strip("_")
-                tools.append({"name": tname, "skill": skill["name"], "path": path, "command": command})
+                tools.append({"name": tname, "skill": skill["name"], "path": path, "command": command, "declared_timeout_ms": _declared_timeout_ms(skill, tname, path)})
         tool = next((t for t in tools if t["name"] == name), None)
         if tool is None:
             print(json.dumps({"ok": False, "name": name, "error": "unknown skill tool"}, indent=2))
@@ -427,6 +441,10 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         if not Path(script).exists():
             print(json.dumps({"ok": False, "name": name, "error": "tool file missing"}, indent=2))
             return 1
+        # A per-tool declared timeoutMs from the skill's tools: frontmatter block
+        # is the fallback when the caller does not pass timeout_ms explicitly.
+        if not params.get("timeout_ms") and tool.get("declared_timeout_ms"):
+            timeout_ms = tool["declared_timeout_ms"]
         argv = [tool["command"], script] + [a for a in str(tool_args).split() if a]
         started = time.monotonic()
         status, stdout, stderr = 1, "", ""

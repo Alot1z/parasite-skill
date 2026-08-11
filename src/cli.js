@@ -40,6 +40,8 @@ COMMANDS
                             (exposes skill tools as native functions; --no-tools disables)
   history   discover|import Safely discover/import Freebuff transcripts
   trace     <file>          Count skill usage in a transcript
+  doctor    One-shot health check: spec + tools verify + audit baseline + config
+            (exit 1 on the first failing check; --json for the machine view)
   link      Create/remove per-skill refs/wiki links (--unlink, --no-default)
   mcp       MCP control: add|remove|list register/remove the parasite-skill MCP
             server in client configs (no manual config); bare mcp runs the server
@@ -91,6 +93,8 @@ TOOLS FLAGS
   --history-name G tools history: filter by tool name glob
   --history-skill G  tools history: filter by skill name glob
   --history-status S  tools history: filter by status (ok|fail)
+  --history-since ISO  tools history: only entries at/after this timestamp
+  --history-until ISO  tools history: only entries at/before this timestamp
   --strict         agents run: exit 2 if any selected tool is policy-blocked
   --baseline       tools audit: diff against the persisted risk baseline
   --write-baseline tools audit: seed the risk baseline file
@@ -226,6 +230,8 @@ FLAGS
   --history-name G history: filter by tool name glob
   --history-skill G  history: filter by skill name glob
   --history-status S  history: filter by status (ok|fail)
+  --history-since ISO  history: only entries at/after this timestamp
+  --history-until ISO  history: only entries at/before this timestamp
   --limit N        history entries to show
   --strict         agents run: exit 2 on policy-blocked tools
   --out PATH       docs: write TOOLS.md elsewhere (default registry/TOOLS.md)
@@ -389,6 +395,8 @@ export function parseFlags(argv) {
       case "--history-name": { const v = value(++i, a); if (v !== undefined) flags.historyName = v; break; }
       case "--history-skill": { const v = value(++i, a); if (v !== undefined) flags.historySkill = v; break; }
       case "--history-status": { const v = value(++i, a); if (v !== undefined) flags.historyStatus = v; break; }
+      case "--history-since": { const v = value(++i, a); if (v !== undefined) flags.historySince = v; break; }
+      case "--history-until": { const v = value(++i, a); if (v !== undefined) flags.historyUntil = v; break; }
       case "--names": { const v = value(++i, a); if (v !== undefined) flags.names = v; break; }
       case "--limit": { const v = value(++i, a); if (v !== undefined) flags.limit = num(v); break; }
       case "--env-filter": { const v = value(++i, a); if (v !== undefined) flags.envFilter = v; break; }
@@ -479,6 +487,7 @@ export async function run(argv) {
     case "history": return commands.cmdHistory(ctx);
 
     case "trace": return commands.cmdTrace(ctx);
+    case "doctor": return commands.cmdDoctor(ctx);
     case "link": return commands.cmdLink(ctx);
     case "bundle": return commands.cmdBundle(ctx);
     case "sync": return commands.cmdSync(ctx);

@@ -59,3 +59,19 @@ jobs:
           PY
       - name: Packed package smoke test
         run: npm run pack:smoke
+      - name: Release gates (doctor + tool-surface checks)
+        shell: bash
+        env:
+          PARASITE_SKILL_HOME: "${{ runner.temp }}/ps-ci-home"
+        run: |
+          # Scan the package's own shipped skill so the tool surface is real.
+          # Write the audit baseline FIRST: doctor's no-baseline fallback gates
+          # on high-risk tools, and the package's own scripts legitimately use
+          # subprocess — approve the shipped surface, then gate on drift.
+          node bin/parasite-skill.js tools audit --write-baseline --dirs skill
+          node bin/parasite-skill.js doctor --json --dirs skill
+          node bin/parasite-skill.js tools verify --dirs skill
+          # The baseline run must report no drift (exits 1 on regression),
+          # catching nondeterministic audits or scans.
+          node bin/parasite-skill.js tools audit --baseline --dirs skill
+          node bin/parasite-skill.js agents run ecosystem-architect "verify the release" --dry-run --strict --max-tools 4 --dirs skill

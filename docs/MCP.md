@@ -61,7 +61,7 @@ dependencies and does not require model credentials.
 | `skill_tools_list` | `dirs?`, `allow?`, `deny?` | inventory callable skill AI-tools (scripts, hooks, tools); policy-filtered |
 | `skill_tools_audit` | `threshold?`, `dirs?` | static risk audit of discovered skill AI-tools; never executes anything |
 | `skill_tools_docs` | `dirs?`, `allow?`, `deny?` | TOOLS.md reference of the callable skill AI-tool surface |
-| `skill_tools_run` | `name`, `args?`, `json_args?`, `timeout_ms?`, `dirs?`, `allow?`, `deny?`, `env?` | explicitly execute one skill AI-tool; bounded, captured, redacted, policy-gated; `json_args` is validated against the tool's declared `argsSchema`; in the JS twin, a per-tool `timeoutMs` declared by the skill is the fallback when `timeout_ms` is omitted (the Python twin defaults to 30000) |
+| `skill_tools_run` | `name`, `args?`, `json_args?`, `timeout_ms?`, `dirs?`, `allow?`, `deny?`, `env?` | explicitly execute one skill AI-tool; bounded, captured, redacted, policy-gated; `json_args` is validated against the tool's declared `argsSchema`; a per-tool `timeoutMs` declared by the skill (via the `tools:` frontmatter block) is the fallback when `timeout_ms` is omitted — in both twins |
 
 `compose` responses now carry per-selected-skill `tools` arrays (name,
 language, `argsSchema` presence) so the host can see the executable surface

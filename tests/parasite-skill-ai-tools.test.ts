@@ -8,6 +8,9 @@ import { auditSkillTools, filterToolsByPolicy, listSkillTools, policyFor, readTo
 import { cmdTools } from "../src/commands/tools.js";
 import { cmdAgentsRun } from "../src/commands/agents-run.js";
 import { cmdAgentsList } from "../src/commands/agents-list.js";
+import { cmdDoctor } from "../src/commands/doctor.js";
+import { cmdExport } from "../src/commands/export.js";
+import { cmdWikis } from "../src/commands/wikis.js";
 import { cmdTrace } from "../src/commands/trace.js";
 import { cmdRefs } from "../src/commands/refs.js";
 import { cmdLlm } from "../src/commands/llm.js";
@@ -347,6 +350,41 @@ describe("Python MCP twin parity", () => {
     ].join("; ");
     const ok = execFileSync(PY, ["-c", code], { encoding: "utf8" }).trim();
     expect(ok).toBe("True");
+  });
+
+  test("python twin skill_tools_run honors a declared per-tool timeoutMs", () => {
+    const base = join(tmpdir(), `sr-py-timeout-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const skillDir = join(base, ".agents", "skills", "meta-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: meta-skill\ndescription: Tool metadata.\n---\n");
+    writeFileSync(join(skillDir, "scripts", "hello.py"), 'print("hi")\n');
+    writeFileSync(
+      join(regDir, "registry.json"),
+      JSON.stringify({
+        skills: [
+          {
+            name: "meta-skill",
+            path: skillDir,
+            assets: [{ path: "scripts/hello.py", group: "scripts", language: "python" }],
+            toolsMeta: { "meta-skill__hello": { "timeoutMs": 7000 } },
+          },
+        ],
+      }),
+    );
+    const code = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, 'skill/scripts')",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_list', {})",
+      "tools = json.loads(text)",
+      "print(tools[0].get('timeoutMs'))",
+    ].join("; ");
+    const timeout = execFileSync(PY, ["-c", code], { encoding: "utf8" }).trim();
+    expect(timeout).toBe("7000");
   });
 
   test("python twin skill_tools_run enforces deny policy", () => {
@@ -747,6 +785,31 @@ describe("agents run dry-run and trace aggregation", () => {
       expect(files.some((name) => name.endsWith(".dryrun.md"))).toBe(true);
       expect(files.some((name) => name.endsWith(".json") && !name.endsWith(".dryrun.json"))).toBe(false);
       expect(readToolRuns(registry)).toHaveLength(0);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("tools history --since/--until filters by time window", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/ok.py": 'print("ok")\n',
+    });
+    // Capture the window BEFORE the run so the entry falls inside it.
+    const since = new Date(Date.now() - 60_000).toISOString();
+    const until = new Date(Date.now() + 60_000).toISOString();
+    const payload = scan([dirs]);
+    runSkillTool(payload, "demo-skill__ok", "", { registry });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdTools({ registry, dirs, toolsAction: "history", historySince: since, historyUntil: until })).toBe(0);
+      expect(out.join("\n")).toContain("demo-skill__ok");
+      out.length = 0;
+      // A window entirely in the past excludes the entry.
+      expect(cmdTools({ registry, dirs, toolsAction: "history", historySince: "2000-01-01T00:00:00Z", historyUntil: "2001-01-01T00:00:00Z" })).toBe(0);
+      expect(out.join("\n")).not.toContain("demo-skill__ok");
     } finally {
       console.log = orig;
     }
@@ -1411,6 +1474,152 @@ describe("compose per-skill tools and agents strict", () => {
       expect(out.join("\n")).toContain("denied by project policy");
       out.length = 0;
       expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], maxTools: 4, tools: policy, strict: true })).toBe(2);
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("doctor, export tools, agents json, wiki tools", () => {
+  test("doctor reports healthy registry/tools/config and exits 0", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdDoctor({ registry, dirs })).toBe(0);
+      const text = out.join("\n");
+      expect(text).toContain("all checks passed");
+      expect(text).toContain("spec");
+      expect(text).toContain("tools ready");
+      expect(text).toContain("audit");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("doctor exits 1 on a missing tool script", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // Seed the registry while the file exists so the asset is known, then
+      // delete the script: doctor must detect the dangling tool and exit 1.
+      expect(cmdDoctor({ registry, dirs })).toBe(0);
+      out.length = 0;
+      rmSync(join(dirs, "demo-skill", "scripts", "hello.py"));
+      expect(cmdDoctor({ registry, dirs })).toBe(1);
+      expect(out.join("\n")).toContain("missing");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("doctor --json emits a machine-readable report", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdDoctor({ registry, dirs, json: true })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      expect(parsed.ok).toBe(true);
+      expect(parsed.checks.some((c: { check: string }) => c.check === "spec" && c.ok)).toBe(true);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("export includes a tools inventory with risk in ecosystem.json", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+      "risky-skill/SKILL.md": "---\nname: risky-skill\ndescription: Risky tooling.\n---\n",
+      "risky-skill/scripts/danger.py": "import os\nos.system('curl http://x')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdExport({ registry, dirs })).toBe(0);
+      const eco = JSON.parse(readFileSync(join(registry, "ecosystem.json"), "utf-8"));
+      expect(eco.counts.callable_tools).toBe(2);
+      const demo = eco.tools.find((tool: { name: string }) => tool.name === "demo-skill__hello");
+      expect(demo.skill).toBe("demo-skill");
+      expect(demo.risk).toBe("low");
+      const risky = eco.tools.find((tool: { name: string }) => tool.name === "risky-skill__danger");
+      expect(risky.risk).toBe("high");
+      const md = readFileSync(join(registry, "ECOSYSTEM.md"), "utf-8");
+      expect(md).toContain("## Callable AI-Tools");
+      expect(md).toContain("risky-skill__danger");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("agents run --json prints the report to stdout", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/inspect.py": "import sys\nprint('inspected')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdAgentsRun({ registry, dirs, _: ["agents", "run", "ecosystem-architect", "debug", "failing", "tests"], maxTools: 4, json: true })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      expect(parsed.kind).toBe("parasite-skill-agent-run");
+      expect(parsed.profile).toBe("ecosystem-architect");
+      expect(parsed.saved).toContain("agents/");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("agents run --all --json --dry-run prints the combined preview", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests with tooling.\n---\n",
+      "demo-skill/scripts/inspect.py": "import sys\nprint('inspected')\n",
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdAgentsRun({ registry, dirs, all: true, _: ["agents", "run", "--all", "debug", "failing", "tests"], maxTools: 2, dryRun: true, json: true, profiles: "ecosystem-architect,release-engineer" })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      expect(parsed.kind).toBe("parasite-skill-agent-dry-run-all");
+      expect(parsed.nothing_executed).toBe(true);
+      expect(parsed.profiles).toBe(2);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("wikis Skills index and per-skill pages list callable AI-tools", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdWikis({ registry, dirs })).toBe(0);
+      const skills = readFileSync(join(registry, "wikis", "Skills.md"), "utf-8");
+      expect(skills).toContain("demo-skill__hello");
+      const page = readFileSync(join(registry, "wikis", "skills", "demo-skill", "index.md"), "utf-8");
+      expect(page).toContain("## Callable AI-Tools");
+      expect(page).toContain("demo-skill__hello");
     } finally {
       console.log = orig;
     }

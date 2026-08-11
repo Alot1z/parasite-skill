@@ -179,18 +179,22 @@ export function cmdAgentsRun(args = {}) {
         `Report: ${base}.dryrun.json`,
       ];
       writeFileSync(join(dir, `${base}.dryrun.md`), md.join("\n") + "\n", "utf-8");
-      console.log(`${smallLogo()} agent dry-run: all ${reports.length} profiles (nothing executed)`);
-      for (const report of reports) {
-        const wouldRun = report.runs.filter((run) => run.ok);
-        console.log(`  ${report.profile}: ${wouldRun.length}/${report.runs.length} tools would run`);
-        for (const run of wouldRun) {
-          console.log(`    - ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)}`);
+      if (args.json) {
+        console.log(JSON.stringify({ ...dryRunReport, saved: `agents/${base}.dryrun.json` }, null, 2));
+      } else {
+        console.log(`${smallLogo()} agent dry-run: all ${reports.length} profiles (nothing executed)`);
+        for (const report of reports) {
+          const wouldRun = report.runs.filter((run) => run.ok);
+          console.log(`  ${report.profile}: ${wouldRun.length}/${report.runs.length} tools would run`);
+          for (const run of wouldRun) {
+            console.log(`    - ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)}`);
+          }
+          for (const blocked of report.runs.filter((run) => run.blocked)) {
+            console.log(`    - ${blocked.name}: blocked — ${blocked.stderr}`);
+          }
         }
-        for (const blocked of report.runs.filter((run) => run.blocked)) {
-          console.log(`    - ${blocked.name}: blocked — ${blocked.stderr}`);
-        }
+        console.log(`  report: ${fmt(join(dir, `${base}.dryrun.md`))} (ledger untouched)`);
       }
-      console.log(`  report: ${fmt(join(dir, `${base}.dryrun.md`))} (ledger untouched)`);
       // --strict turns policy-blocked tools into a hard failure (exit 2).
       return args.strict === true && blockedTotal > 0 ? 2 : 0;
     }
@@ -222,10 +226,15 @@ export function cmdAgentsRun(args = {}) {
       ]).flat(),
       `Report: ${base}.json`,
     ];
-    writeFileSync(join(dir, `${base}.md`), md.join("\n") + "\n", "utf-8");      console.log(`${smallLogo()} agent run: ${allProfiles ? "all " : ""}${combined.profiles} profile${combined.profiles === 1 ? "" : "s"}`);
-    console.log(`  request: ${request}`);
-    console.log(`  tools: ${combined.successful_tools}/${combined.total_tools} succeeded (deduped across profiles)`);
-    console.log(`  report: ${fmt(join(dir, `${base}.md`))}`);
+    writeFileSync(join(dir, `${base}.md`), md.join("\n") + "\n", "utf-8");
+    if (args.json) {
+      console.log(JSON.stringify({ ...combined, saved: `agents/${base}.json` }, null, 2));
+    } else {
+      console.log(`${smallLogo()} agent run: ${allProfiles ? "all " : ""}${combined.profiles} profile${combined.profiles === 1 ? "" : "s"}`);
+      console.log(`  request: ${request}`);
+      console.log(`  tools: ${combined.successful_tools}/${combined.total_tools} succeeded (deduped across profiles)`);
+      console.log(`  report: ${fmt(join(dir, `${base}.md`))}`);
+    }
     if (args.strict === true && reports.some((report) => report.runs.some((run) => run.blocked))) return 2;
     // --min-tools N gates on the number of successful tool runs (CI check).
     if (args.minTools != null && combined.successful_tools < Number(args.minTools)) {
@@ -282,17 +291,21 @@ export function cmdAgentsRun(args = {}) {
       `Report: ${base}.dryrun.json`,
     ];
     writeFileSync(join(dir, `${base}.dryrun.md`), md.join("\n") + "\n", "utf-8");
-    console.log(`${smallLogo()} agent dry-run: ${profile} (nothing executed)`);
-    console.log(`  request: ${request}`);
-    console.log(`  skills:  ${report.decision.selectedSkills.map((skill) => skill.name).join(", ") || "none"}`);
-    console.log(`  tools:   ${wouldRun.length}/${report.runs.length} would run`);
-    for (const run of wouldRun) {
-      console.log(`    - ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)} (cwd ${run.cwd})`);
+    if (args.json) {
+      console.log(JSON.stringify({ ...dryRunReport, saved: `agents/${base}.dryrun.json` }, null, 2));
+    } else {
+      console.log(`${smallLogo()} agent dry-run: ${profile} (nothing executed)`);
+      console.log(`  request: ${request}`);
+      console.log(`  skills:  ${report.decision.selectedSkills.map((skill) => skill.name).join(", ") || "none"}`);
+      console.log(`  tools:   ${wouldRun.length}/${report.runs.length} would run`);
+      for (const run of wouldRun) {
+        console.log(`    - ${run.name}: ${run.command} ${run.argv.slice(1).join(" ").slice(0, 120)} (cwd ${run.cwd})`);
+      }
+      for (const blockedRun of blocked) {
+        console.log(`    - ${blockedRun.name}: blocked — ${blockedRun.stderr}`);
+      }
+      console.log(`  report: ${fmt(join(dir, `${base}.dryrun.md`))} (ledger untouched)`);
     }
-    for (const blockedRun of blocked) {
-      console.log(`    - ${blockedRun.name}: blocked — ${blockedRun.stderr}`);
-    }
-    console.log(`  report: ${fmt(join(dir, `${base}.dryrun.md`))} (ledger untouched)`);
     // --strict turns policy-blocked tools into a hard failure (exit 2).
     return args.strict === true && blocked.length > 0 ? 2 : 0;
   }
@@ -327,23 +340,27 @@ export function cmdAgentsRun(args = {}) {
   ];
   writeFileSync(join(dir, `${base}.md`), md.join("\n") + "\n", "utf-8");
 
-  console.log(`${smallLogo()} agent run: ${profile}`);
-  console.log(`  request: ${request}`);
-  console.log(`  routed: ${report.scoped_to_profile_sets ? "profile sets" : "full registry"} -> set ${report.decision.selectedSet}`);
-  console.log(`  skills: ${report.decision.selectedSkills.map((skill) => skill.name).join(", ") || "none"}`);
-  console.log(`  tools:  ${report.summary}`);
-  for (const run of report.tool_runs) {
-    const mark = run.ok ? "ok" : `exit ${run.status}`;
-    console.log(`    - ${run.name}: ${mark} (${run.duration_ms}ms)`);
-  }
-  for (const run of report.runs) {
-    if (run.blocked) console.log(`    - ${run.name}: blocked — ${run.stderr}`);
-    if (run.stdout) {
-      const echoed = run.stdout.slice(0, 400).replace(/\n/g, "\n    ");
-      console.log(`    | ${echoed}`);
+  if (args.json) {
+    console.log(JSON.stringify({ kind: "parasite-skill-agent-run", ...summaryReport, request, generated_at: new Date().toISOString(), saved: `agents/${base}.json` }, null, 2));
+  } else {
+    console.log(`${smallLogo()} agent run: ${profile}`);
+    console.log(`  request: ${request}`);
+    console.log(`  routed: ${report.scoped_to_profile_sets ? "profile sets" : "full registry"} -> set ${report.decision.selectedSet}`);
+    console.log(`  skills: ${report.decision.selectedSkills.map((skill) => skill.name).join(", ") || "none"}`);
+    console.log(`  tools:  ${report.summary}`);
+    for (const run of report.tool_runs) {
+      const mark = run.ok ? "ok" : `exit ${run.status}`;
+      console.log(`    - ${run.name}: ${mark} (${run.duration_ms}ms)`);
     }
+    for (const run of report.runs) {
+      if (run.blocked) console.log(`    - ${run.name}: blocked — ${run.stderr}`);
+      if (run.stdout) {
+        const echoed = run.stdout.slice(0, 400).replace(/\n/g, "\n    ");
+        console.log(`    | ${echoed}`);
+      }
+    }
+    console.log(`  report: ${fmt(join(dir, `${base}.md`))}`);
   }
-  console.log(`  report: ${fmt(join(dir, `${base}.md`))}`);
   // --strict turns policy-blocked tools into a hard failure (exit 2), so CI
   // and scripted callers can treat a partially-blocked agent run as a gate.
   if (args.strict === true && report.runs.some((run) => run.blocked)) return 2;
