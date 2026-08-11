@@ -1,0 +1,42 @@
+{
+  "name": "skill-router",
+  "version": "1.0.0",
+  "description": "Route any request to the right agent skills: scans the whole skill ecosystem, validates against the Agent Skills spec, routes ideas to skills and skill-sets, generates refs/wikis, and installs the skill-router skill into any AI client (Claude Code, Codex, OpenCode, and more) via copy or symlink.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "skills",
+    "skill-router",
+    "claude-code",
+    "codex",
+    "opencode",
+    "mcp",
+    "cli"
+  ],
+  "bin": {
+    "skill-router": "bin/skill-router.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skill",
+    "scripts",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "bun bin/skill-router.js",
+    "install:skill": "bun bin/skill-router.js install --yes",
+    "scan": "bun bin/skill-router.js scan",
+    "test": "bun test tests/"
+  },
+  "engines": {
+    "node": ">=18",
+    "bun": ">=1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

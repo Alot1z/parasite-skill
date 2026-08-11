@@ -1,0 +1,8 @@
+node_modules
+__pycache__
+*.pyc
+.skill-router-install-tmp
+registry.json
+plan/
+refs/
+wikis/
