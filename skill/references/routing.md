@@ -5,8 +5,8 @@ Deterministic scoring plus an AI judgment layer. The engine produces ranked hypo
 ## Scoring Algorithm (deterministic)
 
 1. **Tokenize** the idea text: lowercase, split on non-alphanumerics, drop stopwords, drop 1-char tokens.
-2. **Index** each skill: keyword set = name tokens + description tokens + tag words.
-3. **Score** each skill for the idea: sum over idea tokens of IDF weight if the token is in the skill's keyword set. IDF(t) = 1 + log(N / (1 + df(t))) where N = number of skills and df(t) = number of skills containing t. Rare, distinctive tokens weigh more; common tokens weigh less.
+2. **Index** each skill: keyword set = name tokens + description tokens + tag words, plus body tokens from the SKILL.md content after the frontmatter (3+ chars only).
+3. **Score** each skill for the idea: sum over idea tokens of IDF weight if the token is in the skill's keyword set; body-only tokens score at half weight (0.5 × (1 + IDF(t))). IDF(t) = 1 + log(N / (1 + df(t))) where N = number of skills and df(t) = number of skills containing t (body tokens included in df). Rare, distinctive tokens weigh more; common tokens weigh less. A skill with a thin description but a rich body still ranks — just below a description match for the same token.
 4. **Bonus** small weight for idea tokens matching the skill *name*.
 5. **Skill-set score** = sum of member scores. The best set is the strongest bundle for the idea.
 

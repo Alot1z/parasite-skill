@@ -28,7 +28,7 @@ Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or
 |---|---|
 | `--scan` | Re-analyze all skills (user + Claude Code + project dirs), rebuild registry |
 | `--validate` | Check every skill against the official spec (name=dirname, description 1-1024 chars, name format) |
-| `--route "<idea>"` | Score every skill against the idea text, return top-N + best skill-set |
+| `--route "<idea>"` | Score every skill against the idea text (name + description keywords at full weight, SKILL.md body keywords at half weight), return top-N + best skill-set |
 | `--route "<idea>" --set <name>` | Route within a specific skill-set only (filters results to members of that set) |
 | `--sets [--apply NAME]` | List skill-sets, or print the exact load order for one set |
 | `--plan "<request>"` | Route + best set -> phased execution plan with verification gates |
@@ -59,7 +59,7 @@ Follow these steps in order whenever routing is requested:
 
 1. **SCAN** — Run `--scan` (or reuse a fresh registry). Know the full inventory before choosing.
 2. **DECOMPOSE** — Apply `tractatus-thinking`: break the request into atomic propositions ("What is X?"). Decompose first, route second.
-3. **ROUTE** — Run `--route "<idea>"`. Take the deterministic top-N as a *hypothesis*, not a verdict.
+3. **ROUTE** — Run `--route "<idea>"`. The scorer matches name + description keywords at full weight and SKILL.md body keywords at half weight, so a skill with a thin description but a rich body still surfaces. Take the deterministic top-N as a *hypothesis*, not a verdict.
 4. **JUDGE** — Apply the AI layer (below). Adjust the selection with semantic reasoning, then confirm the chosen skills exist in `registry.json` (project skills override user skills with the same name).
 5. **PLAN + EXECUTE** — Run `--plan "<request>"` for the skeleton, then execute the plan while following the always-on cadence from `references/always-on.md`.
 
@@ -311,7 +311,7 @@ parasite-skill parasite --protect --file input.js --level medium --out protected
 
 ## The AI Layer (Your Judgment)
 
-The deterministic scorer is keyword/IDF-based. It cannot read intent. After `--route` output:
+The deterministic scorer is keyword/IDF-based over two signal layers: name + description keywords (full weight) and SKILL.md body keywords (half weight, 3+ char tokens only). A thin description no longer hides a rich skill. It still cannot read intent. After `--route` output:
 
 1. Treat scores as ranked hypotheses. A skill missing from the list may still be right.
 2. Verify each candidate: exists in registry, project-override rules applied, description actually matches the request's semantics.
