@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""skill-router MCP server (Python twin).
+"""parasite-skill MCP server (Python twin).
 
 Polyglot parity with src/mcp-server.js: same stdio JSON-RPC 2.0 protocol, same
 tool set (scan/validate/route/sets/plan/refs/wikis/list_installs). Zero
@@ -29,7 +29,7 @@ from conductor import (  # noqa: E402
 )
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "skill-router", "version": "1.0.0"}
+SERVER_INFO = {"name": "parasite-skill", "version": "1.0.0"}
 
 TOOLS = [
     {"name": "scan", "description": "Re-analyze the whole skill ecosystem and rebuild the registry.", "inputSchema": {"type": "object", "properties": {}}},
@@ -39,7 +39,7 @@ TOOLS = [
     {"name": "plan", "description": "Emit a routed execution plan for a request.", "inputSchema": {"type": "object", "properties": {"request": {"type": "string"}}, "required": ["request"]}},
     {"name": "refs", "description": "Generate ref pages for all skills.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "wikis", "description": "Generate the wiki + graph.", "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "list_installs", "description": "List where the skill-router skill is installed across clients.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "list_installs", "description": "List where the parasite-skill skill is installed across clients.", "inputSchema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -92,7 +92,7 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
                             sets_map[k] = v
             except Exception:
                 pass
-        # Project-defined sets (skill-router.json) overlay custom sets last.
+        # Project-defined sets (parasite-skill.json) overlay custom sets last.
         sets_map.update(project_sets())
         if sn:
             members = sets_map.get(sn, (None, []))[1]
@@ -149,7 +149,7 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         return 0
 
     def do_list():
-        base = Path(home()) / ".agents" / "skills" / "skill-router"
+        base = Path(home()) / ".agents" / "skills" / "parasite-skill"
         if base.exists():
             print(f"[ok] Universal -> {base}")
         else:

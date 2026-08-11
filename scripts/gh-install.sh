@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# skill-router — no-npm install from GitHub Pages.
+# parasite-skill — no-npm install from GitHub Pages.
 # Fetches the latest bundle + manifest from the Pages site and installs the
 # skill payload into ~/.agents/skills (universal dir), then offers to register
 # the MCP server. No node/npm/bun required for the download path itself.
 #
 # Usage:
-#   curl -fsSL https://<GH_USER>.github.io/skill-router/install.sh | bash
-#   SKILL_ROUTER_PAGES_URL=https://<GH_USER>.github.io/skill-router bash gh-install.sh
+#   curl -fsSL https://<GH_USER>.github.io/parasite-skill/install.sh | bash
+#   PARASITE_SKILL_PAGES_URL=https://<GH_USER>.github.io/parasite-skill bash gh-install.sh
 #
 set -euo pipefail
 
-BASE_URL="${SKILL_ROUTER_PAGES_URL:-https://<GH_USER>.github.io/skill-router}"
-DEST="${SKILL_ROUTER_DEST:-$HOME/.agents/skills/skill-router}"
-STAGING="${SKILL_ROUTER_STAGING:-$HOME/.agents/skills/.skill-router-staging}"
+BASE_URL="${PARASITE_SKILL_PAGES_URL:-https://<GH_USER>.github.io/parasite-skill}"
+DEST="${PARASITE_SKILL_DEST:-$HOME/.agents/skills/parasite-skill}"
+STAGING="${PARASITE_SKILL_STAGING:-$HOME/.agents/skills/.parasite-skill-staging}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-echo "skill-router install (from GitHub Pages)"
+echo "parasite-skill install (from GitHub Pages)"
 echo "  source : $BASE_URL"
 echo "  dest   : $DEST"
 
@@ -25,7 +25,7 @@ echo "==> fetching manifest"
 curl -fsSL "$BASE_URL/install.json" -o "$TMP/install.json"
 VERSION="$(python3 -c "import json;print(json.load(open('$TMP/install.json'))['version'])" 2>/dev/null || echo unknown)"
 echo "==> fetching bundle v$VERSION"
-curl -fsSL "$BASE_URL/skill-router-bundle.tar.gz" -o "$TMP/bundle.tar.gz"
+curl -fsSL "$BASE_URL/parasite-skill-bundle.tar.gz" -o "$TMP/bundle.tar.gz"
 
 # 2. Extract into a *persistent* staging dir (survives the TMP cleanup trap).
 echo "==> extracting to persistent staging"
@@ -34,9 +34,9 @@ mkdir -p "$STAGING"
 tar -xzf "$TMP/bundle.tar.gz" -C "$STAGING"
 PAYLOAD="$STAGING/skill"
 
-# 3. Install (copy mode by default; SKILL_ROUTER_LINK=1 uses a symlink).
+# 3. Install (copy mode by default; PARASITE_SKILL_LINK=1 uses a symlink).
 mkdir -p "$(dirname "$DEST")"
-if [ "${SKILL_ROUTER_LINK:-0}" = "1" ]; then
+if [ "${PARASITE_SKILL_LINK:-0}" = "1" ]; then
   rm -rf "$DEST"
   ln -s "$PAYLOAD" "$DEST"
   echo "==> linked (symlink) -> $DEST  (payload: $PAYLOAD)"
@@ -58,6 +58,6 @@ echo
 echo "Installed. Next steps:"
 echo "  ls $DEST"
 echo "  Register the MCP server in your client configs (no manual editing):"
-echo "    skill-router mcp add     (from the full CLI)"
+echo "    parasite-skill mcp add     (from the full CLI)"
 echo "  Or for Claude Code only:"
-echo "    claude mcp add skill-router -- node <absolute-path>/src/mcp-server.js"
+echo "    claude mcp add parasite-skill -- node <absolute-path>/src/mcp-server.js"

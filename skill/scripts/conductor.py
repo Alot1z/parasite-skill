@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-skill-router engine — Python edition (Python 3.14+).
+parasite-skill engine — Python edition (Python 3.14+).
 
 Scans the skill ecosystem, validates against the Agent Skills open spec,
 routes requests to skills and skill-sets, generates refs/wikis, plans
@@ -19,7 +19,7 @@ Commands:
   link      [--unlink]    --dirs a,b  Create/remove adaptive links
 
 Global flags:
-  --registry DIR   Override the central registry dir (default ~/.agents/skills/.skill-router)
+  --registry DIR   Override the central registry dir (default ~/.agents/skills/.parasite-skill)
   --json           Machine-readable output
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 VERSION = "1.0.0"
-REGISTRY_NAME = ".skill-router"
+REGISTRY_NAME = ".parasite-skill"
 
 STOPWORDS = set(
     "a an and or of to in for on with use when this that is are be was were it its as at by from into over after before "
@@ -98,9 +98,9 @@ MULTIPLICATIVE_PAIRS = [
 # ---------------------------------------------------------------- helpers
 
 def home() -> Path:
-    # SKILL_ROUTER_HOME overrides the home base everywhere (installs, sync, MCP,
+    # PARASITE_SKILL_HOME overrides the home base everywhere (installs, sync, MCP,
     # registry) so sandboxed runs and tests stay fully isolated.
-    override = os.environ.get("SKILL_ROUTER_HOME")
+    override = os.environ.get("PARASITE_SKILL_HOME")
     return Path(override) if override else Path.home()
 
 
@@ -320,13 +320,13 @@ def best_set(registry: dict, scores: dict[str, float], sets: dict | None = None)
 
 
 def project_sets() -> dict:
-    """Merge skill-sets defined in the nearest skill-router.json over the
+    """Merge skill-sets defined in the nearest parasite-skill.json over the
     built-ins (Python tuple shape). Walks up from the current directory so a
     project root config applies from any subdirectory."""
     merged = dict(SETS)
     cur = Path.cwd()
     for _ in range(64):
-        for name in ("skill-router.json", ".skill-router.json"):
+        for name in ("parasite-skill.json", ".parasite-skill.json"):
             f = cur / name
             if f.exists():
                 try:
@@ -546,9 +546,9 @@ def cmd_wikis(args) -> int:
                 .replace("{{related}}", related))
         (per / s["name"]).mkdir(exist_ok=True)
         (per / s["name"] / "index.md").write_text(page, encoding="utf-8")
-    home = ["# Skill Router Wiki", "",
+    home = ["# Parasite Skill Wiki", "",
             f"{len(skills)} skills indexed. {len(SETS)} skill-sets.",
-            f"Generated {payload['generated_at']} by skill-router v{payload.get('version', '?')}.", "",
+            f"Generated {payload['generated_at']} by parasite-skill v{payload.get('version', '?')}.", "",
             "- [All skills](Skills.md)", "- [Categories](Categories.md)", "- [Skill-sets](SkillSets.md)",
             "- [Multiplicative pairs](MultiplicativePairs.md)", "- [Graph (DOT)](graph.dot)", "- [Graph (Mermaid)](graph.mmd)", ""]
     (wiki / "Home.md").write_text("\n".join(home), encoding="utf-8")
@@ -564,7 +564,7 @@ def cmd_plan(args) -> int:
     best = best_set(payload, scores)[0][0]
     slug = re.sub(r"[^a-z0-9]+", "-", args.request.lower())[:40].strip("-")
     plan = [f"# Execution Plan: {args.request}", "",
-            f"Routed by skill-router v{VERSION} — deterministic scores are hypotheses; the agent layer re-verifies.", "",
+            f"Routed by parasite-skill v{VERSION} — deterministic scores are hypotheses; the agent layer re-verifies.", "",
             "## Phases", "",
             "### START (before tool use)", "1. tractatus-thinking — decompose the request",
             "2. sequential-thinking — build a reasoning chain",
@@ -617,7 +617,7 @@ def cmd_trace(args) -> int:
 
 def _make_link(skill_path: Path, registry: Path, unlink: bool) -> str:
     name = skill_path.name
-    manifest = skill_path / ".skill-router.links.json"
+    manifest = skill_path / ".parasite-skill.links.json"
     refs_target = registry / "refs" / name
     wiki_target = registry / "wikis" / "skills" / name
     if unlink:
@@ -701,11 +701,11 @@ def cmd_link(args) -> int:
 # ---------------------------------------------------------------- main
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="skill-router", description="Skill ecosystem router (Python engine)")
+    parser = argparse.ArgumentParser(prog="parasite-skill", description="Skill ecosystem router (Python engine)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--registry", help="central registry dir (default ~/.agents/skills/.skill-router)")
+    common.add_argument("--registry", help="central registry dir (default ~/.agents/skills/.parasite-skill)")
     common.add_argument("--dirs", help="extra scan dirs, comma-separated")
     common.add_argument("--force", action="store_true", help="force rescan / fresh load")
     common.add_argument("--json", action="store_true", help="machine-readable output")

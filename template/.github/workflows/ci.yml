@@ -13,11 +13,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Scan + validate skills
         run: |
-          bun <repo>/bin/skill-router.js scan --dirs skills
-          bun <repo>/bin/skill-router.js validate
+          bun <repo>/bin/parasite-skill.js scan --dirs skills
+          bun <repo>/bin/parasite-skill.js validate
       - name: Check for accidental secrets
         run: |
-          if grep -rniE "sk-[a-zA-Z0-9]{20}|ghp_[a-zA-Z0-9]{20}|api[_-]?key" skills .skill-router 2>/dev/null; then
+          if grep -rniE "sk-[a-zA-Z0-9]{20}|ghp_[a-zA-Z0-9]{20}|api[_-]?key" skills .parasite-skill 2>/dev/null; then
             echo "Possible secret found!"; exit 1
           fi
           echo "no secrets detected"

@@ -16,10 +16,10 @@ import { join } from "node:path";
 import { pickList, progress } from "./tui.js";
 import { banner, smallLogo } from "./logo.js";
 
-export const SKILL_NAME = "skill-router";
+export const SKILL_NAME = "parasite-skill";
 
-// Test hook: SKILL_ROUTER_HOME redirects the home base (sandbox installs).
-const homeBase = () => process.env.SKILL_ROUTER_HOME || homedir();  // || so "" falls back
+// Test hook: PARASITE_SKILL_HOME redirects the home base (sandbox installs).
+const homeBase = () => process.env.PARASITE_SKILL_HOME || homedir();  // || so "" falls back
 
 const H = homeBase;
 
@@ -92,7 +92,7 @@ function installOne(dest, mode, source, force) {
   mkdirSync(parent, { recursive: true });
   // Install to a temp sibling first, then swap — a failed install never
   // destroys the previous one.
-  const tmp = join(parent, ".skill-router-install-tmp");
+  const tmp = join(parent, ".parasite-skill-install-tmp");
   removeDest(tmp);
   let res;
   if (mode === "link") {
@@ -139,7 +139,7 @@ export async function runInstall(args) {
   const scope = args.scope === "project" ? "project" : "user";
   const mode = args.mode === "link" ? "link" : "copy";
   // --dest installs to an explicit path (any directory the user chooses),
-  // bypassing client detection. The skill lands at <dest>/skill-router.
+  // bypassing client detection. The skill lands at <dest>/parasite-skill.
   if (args.dest) {
     const dest = join(args.dest, SKILL_NAME);
     console.log(banner());
@@ -160,7 +160,7 @@ export async function runInstall(args) {
     return 1;
   }
 
-  // Deduplicate by destination dir; the skill is always <dir>/skill-router.
+  // Deduplicate by destination dir; the skill is always <dir>/parasite-skill.
   const seen = new Set();
   const targets = [];
   for (const c of wanted) {
@@ -175,7 +175,7 @@ export async function runInstall(args) {
     console.log(banner());
     const picked = await pickList(
       targets.map((t, i) => ({ id: String(i), label: t.label, detail: t.dest.replace(/\\/g, "/"), checked: i === 0 })),
-      { multi: true, title: "Which clients should get skill-router?" },
+      { multi: true, title: "Which clients should get parasite-skill?" },
     );
     if (picked === null) {
       console.log("cancelled");
@@ -185,7 +185,7 @@ export async function runInstall(args) {
   } else {
     console.log(banner());
   }
-  const rows = await progress("installing skill-router", async (draw) => {
+  const rows = await progress("installing parasite-skill", async (draw) => {
     const out = [];
     for (let i = 0; i < chosen.length; i++) {
       const t = chosen[i];
@@ -210,7 +210,7 @@ export async function runInstall(args) {
 }
 
 export function runList() {
-  console.log("skill-router instances:");
+  console.log("parasite-skill instances:");
   let found = 0;
   for (const c of CLIENTS) {
     const dest = join(c.user, SKILL_NAME);
@@ -265,7 +265,7 @@ export async function runRefresh(args) {
   
   if (installed.length === 0) {
     console.log("no installed instances found");
-    console.log("  run: skill-router install  (to install first)");
+    console.log("  run: parasite-skill install  (to install first)");
     return 0;
   }
   

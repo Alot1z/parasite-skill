@@ -1,7 +1,7 @@
 node_modules
 __pycache__
 *.pyc
-.skill-router-install-tmp
+.parasite-skill-install-tmp
 registry.json
 plan/
 refs/

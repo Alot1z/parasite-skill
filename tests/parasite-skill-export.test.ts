@@ -13,13 +13,13 @@ function tmpSkill(root, name, desc) {
 }
 
 function withHome(home, fn) {
-  const prev = process.env.SKILL_ROUTER_HOME;
-  process.env.SKILL_ROUTER_HOME = home;
+  const prev = process.env.PARASITE_SKILL_HOME;
+  process.env.PARASITE_SKILL_HOME = home;
   try {
     return fn();
   } finally {
-    if (prev === undefined) delete process.env.SKILL_ROUTER_HOME;
-    else process.env.SKILL_ROUTER_HOME = prev;
+    if (prev === undefined) delete process.env.PARASITE_SKILL_HOME;
+    else process.env.PARASITE_SKILL_HOME = prev;
   }
 }
 
@@ -73,7 +73,7 @@ describe("cmdExport", () => {
         expect(Array.isArray(j.rules.global)).toBe(true);
 
         const md = readFileSync(mdPath, "utf-8");
-        expect(md).toContain("# Skill Router Ecosystem");
+        expect(md).toContain("# Parasite Skill Ecosystem");
         expect(md).toContain("alpha-skill");
         expect(md).toContain("brainstorm-max");
         // no contents, no secrets — only names/paths

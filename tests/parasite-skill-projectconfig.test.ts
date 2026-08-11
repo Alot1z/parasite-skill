@@ -68,10 +68,10 @@ describe("cmdRoute project routing controls", () => {
   beforeAll(() => {
     // Isolate scans from the real ~/.agents/skills. BASE_HOME reads the env
     // at call-time, so setting it here (before the describe runs) is enough.
-    process.env.SKILL_ROUTER_HOME = join(tmpdir(), "sr-pc-home-" + Date.now());
+    process.env.PARASITE_SKILL_HOME = join(tmpdir(), "sr-pc-home-" + Date.now());
   });
   afterAll(() => {
-    delete process.env.SKILL_ROUTER_HOME;
+    delete process.env.PARASITE_SKILL_HOME;
   });
 
   test("excludeSkills removes a skill from results", () => {

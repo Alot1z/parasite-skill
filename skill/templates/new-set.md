@@ -41,14 +41,14 @@ your-set-name: {
 },
 ```
 
-Then regenerate: `skill-router scan` (or `--force`) and `skill-router wikis`.
+Then regenerate: `parasite-skill scan` (or `--force`) and `parasite-skill wikis`.
 
 ## 5. Validate
 
 ```bash
-skill-router sets                 # shows your set + install coverage
-skill-router route "a task for your set" --set your-set-name
-skill-router wikis                # rebuilds the wiki with the new set
+parasite-skill sets                 # shows your set + install coverage
+parasite-skill route "a task for your set" --set your-set-name
+parasite-skill wikis                # rebuilds the wiki with the new set
 ```
 
 ## Starter sets worth copying

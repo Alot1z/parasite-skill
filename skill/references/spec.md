@@ -33,8 +33,8 @@ Source: https://gofastmcp.com/getting-started/welcome
 - FastMCP (Prefect) is a high-level framework over MCP: servers, clients, and apps (interactive UI components). Available in Python (`fastmcp`) and TypeScript (`@prefecthq/fastmcp-ts`); the Go ecosystem has fast-MCP implementations too (gofastmcp.com is the Go entry point).
 - Relation to skills: skills carry *procedure* (instructions); MCP servers carry *tools* (execution). A skill can point at an MCP server it relies on. The router stays language-agnostic: it detects bundled scripts in any language and records them in the registry, so MCP/Go/Rust/Java tooling is indexed the same as Python/Bun scripts.
 
-## How skill-router Implements This
+## How parasite-skill Implements This
 
 - `--scan` discovers skills from all four scope dirs, parses frontmatter, detects bundled script languages, infers tags/keywords.
 - `--validate` checks: SKILL.md exists, name matches directory name, name format regex, description present and 1-1024 chars. Non-conforming skills are reported, not skipped.
-- `--link` creates per-skill junctions/symlinks + `.skill-router.links.json` manifests so refs/wikis are reachable from each skill dir without editing vendor content.
+- `--link` creates per-skill junctions/symlinks + `.parasite-skill.links.json` manifests so refs/wikis are reachable from each skill dir without editing vendor content.

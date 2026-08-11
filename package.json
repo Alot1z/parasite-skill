@@ -8,7 +8,7 @@
     "agent-skills",
     "skills",
     "parasite-skill",
-    "skill-router",
+    "parasite-skill",
     "claude-code",
     "codex",
     "opencode",
@@ -19,8 +19,7 @@
     "server-wrapping"
   ],
   "bin": {
-    "parasite-skill": "bin/skill-router.js",
-    "skill-router": "bin/skill-router.js"
+    "parasite-skill": "bin/parasite-skill.js"
   },
   "files": [
     "bin",
@@ -32,9 +31,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "bun bin/skill-router.js",
-    "install:skill": "bun bin/skill-router.js install --yes",
-    "scan": "bun bin/skill-router.js scan",
+    "start": "bun bin/parasite-skill.js",
+    "install:skill": "bun bin/parasite-skill.js install --yes",
+    "scan": "bun bin/parasite-skill.js scan",
     "test": "bun test tests/"
   },
   "engines": {

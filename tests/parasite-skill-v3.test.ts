@@ -8,14 +8,15 @@ import { banner, LOGO, smallLogo } from "../src/logo.js";
 describe("logo (multicolor gradient)", () => {
   test("wordmark renders with truecolor gradient codes", () => {
     const b = banner();
+    expect(b).toContain("PARASITE");
     expect(b).toContain("SKILL");
-    expect(b).toContain("ROUTER");
     // Gradient should emit 24-bit color codes (indigo/cyan/teal stops).
     expect(b).toContain("38;2");
   });
 
-  test("LOGO contains the router hub motif", () => {
-    expect(LOGO).toContain("┌─────────┐");
+  test("LOGO contains the parasite skill hub motif", () => {
+    expect(LOGO).toContain("┌──────────┐");
+    expect(LOGO).toContain("PARASITE");
     expect(LOGO).toContain("SKILL");
   });
 

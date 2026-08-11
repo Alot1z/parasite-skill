@@ -36,7 +36,7 @@ Output: a 3-line plan statement (what, why, how) before the first tool call.
 | R2 | Between tool calls, re-invoke the relevant thinking skill — do not continue on stale reasoning |
 | R3 | `--force` mid-session re-loads: tractatus-thinking, sequential-thinking, doubt-driven-development, debug-thinking, stop-slop, verification-before-completion |
 | R4 | Every milestone ends with verification; every final message ends with the AFTER set |
-| R5 | If the user invokes `/skill-router`, the cadence applies to the routed task too |
+| R5 | If the user invokes `/parasite-skill`, the cadence applies to the routed task too |
 
 ## Why
 

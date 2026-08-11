@@ -92,4 +92,60 @@ describe("scoreIdea", () => {
     const { scored } = scoreIdea(payload, "write unit tests for the api");
     expect(scored[0][0]).toBe("test-skill");
   });
+
+  test("routes on SKILL.md body keywords when the description is thin", () => {
+    const base = join(tmpdir(), `sr-body-${Date.now()}`);
+    mkdirSync(join(base, "auth-skill"), { recursive: true });
+    writeFileSync(
+      join(base, "auth-skill", "SKILL.md"),
+      [
+        "---",
+        "name: auth-skill",
+        "description: Handles things generically.",
+        "---",
+        "# Auth",
+        "Implements OAuth2 flows, JWT signing, and session management for web apps.",
+        "",
+      ].join("\n"),
+    );
+    const payload = scan([base]);
+    const s = payload.skills[0];
+    expect(s.bodyKeywords).toContain("oauth2");
+    const { scored } = scoreIdea(payload, "oauth2 jwt session management");
+    expect(scored[0][0]).toBe("auth-skill");
+  });
+
+  test("description keywords outrank body-only keywords", () => {
+    const base = join(tmpdir(), `sr-descbody-${Date.now()}`);
+    mkdirSync(join(base, "crypto-skill"), { recursive: true });
+    writeFileSync(
+      join(base, "crypto-skill", "SKILL.md"),
+      [
+        "---",
+        "name: crypto-skill",
+        "description: Cryptographic signing and hashing.",
+        "---",
+        "# Body",
+        "Uses sha256 and hmac.",
+        "",
+      ].join("\n"),
+    );
+    mkdirSync(join(base, "integrity-skill"), { recursive: true });
+    writeFileSync(
+      join(base, "integrity-skill", "SKILL.md"),
+      [
+        "---",
+        "name: integrity-skill",
+        "description: Generic utilities.",
+        "---",
+        "# Body",
+        "Performs cryptographic hashing with sha256 and hmac for data integrity.",
+        "",
+      ].join("\n"),
+    );
+    const payload = scan([base]);
+    const { scored } = scoreIdea(payload, "cryptographic hashing sha256");
+    expect(scored[0][0]).toBe("crypto-skill");
+  });
+
 });

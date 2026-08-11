@@ -1,4 +1,4 @@
-// skill-router engine core — plain ESM JS, runs under Node.js and Bun.
+// parasite-skill engine core — plain ESM JS, runs under Node.js and Bun.
 import {
   existsSync,
   mkdirSync,
@@ -38,7 +38,7 @@ export function saveCustomSets(reg, custom) {
   return f;
 }
 
-// Merge project-defined sets (from skill-router.json) over the registry sets.
+// Merge project-defined sets (from parasite-skill.json) over the registry sets.
 // A project can declare its own workflow sets without touching sets.custom.json
 // or the built-ins. Project sets are marked so listings can label them.
 export function loadSetsWithProject(reg, projectSets) {
@@ -58,7 +58,7 @@ export function loadSetsWithProject(reg, projectSets) {
 }
 
 export const VERSION = "1.0.0";
-export const REGISTRY_NAME = ".skill-router";
+export const REGISTRY_NAME = ".parasite-skill";
 export const HOME = homedir();
 
 export const STOPWORDS = new Set(
@@ -71,9 +71,9 @@ export const STOPWORDS = new Set(
 
 // ---------------------------------------------------------------- paths
 
-// SKILL_ROUTER_HOME is honored across the whole package (installs, sync, MCP,
+// PARASITE_SKILL_HOME is honored across the whole package (installs, sync, MCP,
 // and now the registry) so sandboxed runs and tests stay fully isolated.
-const BASE_HOME = () => process.env.SKILL_ROUTER_HOME || HOME;  // || not ?? so "" falls back
+const BASE_HOME = () => process.env.PARASITE_SKILL_HOME || HOME;  // || not ?? so "" falls back
 
 export function registryDir(override) {
   const d = override ? override : join(BASE_HOME(), ".agents", "skills", REGISTRY_NAME);
@@ -263,6 +263,10 @@ export function scanSkillDir(skillPath) {
   else if (description.length < 1 || description.length > 1024) issues.push("description length out of 1-1024");
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) issues.push(`name '${name}' fails spec format`);
   const keywords = [...new Set([...tokenize(`${name} ${description}`), ...inferTags(name, description)])].sort();
+  // Body keywords: tokenize the SKILL.md content after the frontmatter so
+  // routing can match skills whose description is thin but body is rich.
+  const bodyMatch = text.match(/^---[ \t]*\r?\n[\s\S]*?^---[ \t]*\r?\n([\s\S]*)$/m);
+  const bodyKeywords = [...new Set(tokenize(bodyMatch ? bodyMatch[1] : text).filter((t) => t.length >= 3))].sort();
   return {
     name,
     path: skillPath.replace(/\\/g, "/"),
@@ -271,6 +275,7 @@ export function scanSkillDir(skillPath) {
     languages: languages.sort(),
     tags: inferTags(name, description),
     keywords,
+    bodyKeywords,
     spec_ok: issues.length === 0,
     issues,
   };
@@ -333,15 +338,18 @@ export function scoreIdea(payload, idea, sets = SETS) {
   const n = Math.max(skills.length, 1);
   const df = {};
   for (const s of skills) {
-    for (const k of new Set(s.keywords)) df[k] = (df[k] ?? 0) + 1;
+    for (const k of new Set([...(s.keywords ?? []), ...(s.bodyKeywords ?? [])])) df[k] = (df[k] ?? 0) + 1;
   }
   const tokens = tokenize(idea);
   const scored = [];
   for (const s of skills) {
-    const kw = new Set(s.keywords);
+    const kw = new Set(s.keywords ?? []);
+    const bk = new Set(s.bodyKeywords ?? []);
     let score = 0;
     for (const t of tokens) {
-      if (kw.has(t)) score += 1 + Math.log(1 + n / (1 + (df[t] ?? 0)));
+      const idf = Math.log(1 + n / (1 + (df[t] ?? 0)));
+      if (kw.has(t)) score += 1 + idf;
+      else if (bk.has(t)) score += 0.5 * (1 + idf);
       if (tokenize(s.name).includes(t)) score += 2;
     }
     if (score > 0) scored.push([s.name, Math.round(score * 100) / 100]);
@@ -362,11 +370,11 @@ export function bestSets(skills, scored, sets = SETS) {
 
 // ---------------------------------------------------------------- project config
 
-// Load project-level config from skill-router.json in the current working
+// Load project-level config from parasite-skill.json in the current working
 // directory. This allows each project to define default sets, registry
 // location, scan dirs, and other settings.
 export function loadProjectConfig(startDir = process.cwd()) {
-  const configNames = ["skill-router.json", ".skill-router.json"];
+  const configNames = ["parasite-skill.json", ".parasite-skill.json"];
   let dir = startDir;
   
   // Walk up the directory tree to find a config file
@@ -405,7 +413,7 @@ export function mergeConfig(projectConfig, cliFlags) {
     if (typeof projectConfig.registry === "string") {
       merged.registry = projectConfig.registry;
     } else {
-      console.error("Warning: invalid 'registry' in skill-router.json (expected string)");
+      console.error("Warning: invalid 'registry' in parasite-skill.json (expected string)");
     }
   }
   
@@ -416,7 +424,7 @@ export function mergeConfig(projectConfig, cliFlags) {
     } else if (typeof projectConfig.dirs === "string") {
       merged.dirs = projectConfig.dirs;
     } else {
-      console.error("Warning: invalid 'dirs' in skill-router.json (expected string or array)");
+      console.error("Warning: invalid 'dirs' in parasite-skill.json (expected string or array)");
     }
   }
   
@@ -425,7 +433,7 @@ export function mergeConfig(projectConfig, cliFlags) {
     if (typeof projectConfig.defaultSet === "string") {
       merged.set = projectConfig.defaultSet;
     } else {
-      console.error("Warning: invalid 'defaultSet' in skill-router.json (expected string)");
+      console.error("Warning: invalid 'defaultSet' in parasite-skill.json (expected string)");
     }
   }
   
@@ -434,7 +442,7 @@ export function mergeConfig(projectConfig, cliFlags) {
     if (typeof projectConfig.force === "boolean") {
       merged.force = projectConfig.force;
     } else {
-      console.error("Warning: invalid 'force' in skill-router.json (expected boolean)");
+      console.error("Warning: invalid 'force' in parasite-skill.json (expected boolean)");
     }
   }
   
@@ -449,9 +457,9 @@ export function mergeConfig(projectConfig, cliFlags) {
         }
       }
       if (Object.keys(valid).length) merged.sets = valid;
-      else console.error("Warning: 'sets' in skill-router.json has no valid {name: {members[]}} entries");
+      else console.error("Warning: 'sets' in parasite-skill.json has no valid {name: {members[]}} entries");
     } else {
-      console.error("Warning: invalid 'sets' in skill-router.json (expected object of {name: {desc, members[]}})");
+      console.error("Warning: invalid 'sets' in parasite-skill.json (expected object of {name: {desc, members[]}})");
     }
   }
 
@@ -461,7 +469,7 @@ export function mergeConfig(projectConfig, cliFlags) {
     if (Array.isArray(projectConfig.enabledSets) && projectConfig.enabledSets.every((s) => typeof s === "string")) {
       merged.enabledSets = projectConfig.enabledSets;
     } else {
-      console.error("Warning: invalid 'enabledSets' in skill-router.json (expected array of set names)");
+      console.error("Warning: invalid 'enabledSets' in parasite-skill.json (expected array of set names)");
     }
   }
 
@@ -469,7 +477,7 @@ export function mergeConfig(projectConfig, cliFlags) {
     if (Array.isArray(projectConfig.excludeSkills) && projectConfig.excludeSkills.every((s) => typeof s === "string")) {
       merged.excludeSkills = projectConfig.excludeSkills;
     } else {
-      console.error("Warning: invalid 'excludeSkills' in skill-router.json (expected array of skill names)");
+      console.error("Warning: invalid 'excludeSkills' in parasite-skill.json (expected array of skill names)");
     }
   }
 
@@ -479,21 +487,21 @@ export function mergeConfig(projectConfig, cliFlags) {
       if (typeof projectConfig.route.top === "number" && projectConfig.route.top > 0) route.top = projectConfig.route.top;
       if (typeof projectConfig.route.minScore === "number" && projectConfig.route.minScore >= 0) route.minScore = projectConfig.route.minScore;
       if (Object.keys(route).length) merged.route = route;
-      else console.error("Warning: 'route' in skill-router.json has no valid knobs (top > 0, minScore >= 0)");
+      else console.error("Warning: 'route' in parasite-skill.json has no valid knobs (top > 0, minScore >= 0)");
     } else {
-      console.error("Warning: invalid 'route' in skill-router.json (expected object)");
+      console.error("Warning: invalid 'route' in parasite-skill.json (expected object)");
     }
   }
 
   // Per-project env isolation: an object of key/value strings applied to
   // generated parasite hooks/wrappers and exposed as ctx.env. It never
   // mutates the calling shell environment. For full sandbox isolation of the
-  // whole package (registry, installs, sync, MCP) use SKILL_ROUTER_HOME.
+  // whole package (registry, installs, sync, MCP) use PARASITE_SKILL_HOME.
   if (projectConfig.env !== undefined && projectConfig.env !== null) {
     if (typeof projectConfig.env === "object" && !Array.isArray(projectConfig.env)) {
       merged.env = projectConfig.env;
     } else {
-      console.error("Warning: invalid 'env' in skill-router.json (expected object of key/value strings)");
+      console.error("Warning: invalid 'env' in parasite-skill.json (expected object of key/value strings)");
     }
   }
 
@@ -510,7 +518,7 @@ export function mergeConfig(projectConfig, cliFlags) {
       }
       merged.parasite = parasite;
     } else {
-      console.error("Warning: invalid 'parasite' in skill-router.json (expected boolean or {enabled, clients[]})");
+      console.error("Warning: invalid 'parasite' in parasite-skill.json (expected boolean or {enabled, clients[]})");
     }
   }
 
@@ -520,7 +528,7 @@ export function mergeConfig(projectConfig, cliFlags) {
     if (Array.isArray(projectConfig.clients) && projectConfig.clients.every((c) => typeof c === "string")) {
       merged.clients = projectConfig.clients;
     } else {
-      console.error("Warning: invalid 'clients' in skill-router.json (expected array of client ids)");
+      console.error("Warning: invalid 'clients' in parasite-skill.json (expected array of client ids)");
     }
   }
 

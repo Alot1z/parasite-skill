@@ -1,27 +1,27 @@
-// skill-router visual identity.
-// Custom block wordmark ("SKILL ROUTER") with a per-character truecolor
+// parasite-skill visual identity.
+// Custom block wordmark ("PARASITE SKILL") with a per-character truecolor
 // gradient — indigo → cyan → teal, multiple shades per letter. No vendor
 // palette: deliberately unlike skills.sh (grey) and Claude Code (orange/red).
 // Falls back to a flat cyan for terminals without 24-bit color.
 
 const WORDMARK = [
-  "███████ ██  ██ ██ ██     ██      ██████  ██████ ██   ██ ████████ ███████ ██████ ",
-  "██      ██ ██ ██ ██ ██   ██      ██  ██ ██   ██ ██   ██   ██    ██      ██  ██",
-  "███████ ██████ ██ ██  ██ ██      ██████ ██   ██ ██   ██   ██    █████   ██████ ",
-  "     ██ ██  ██ ██ ██   ████      ██  ██ ██   ██ ██   ██   ██    ██      ██  ██",
-  "███████ ██  ██ ██ ███████ ███████ ██  ██ ██████  ██████    ██    ███████ ██  ██",
+  "█████   ████  █████   ████  ██████ ██████ ██████ ██████        ██████ ██  ██ ██████ ██     ██    ",
+  "██  ██ ██  ██ ██  ██ ██  ██ ██       ██     ██   ██            ██     ██ ██    ██   ██     ██    ",
+  "█████  ██████ █████  ██████ █████    ██     ██   █████         █████  ████     ██   ██     ██    ",
+  "██     ██  ██ ██ ██  ██  ██     ██   ██     ██   ██                ██ ██ ██    ██   ██     ██    ",
+  "██     ██  ██ ██  ██ ██  ██ ██████ ██████   ██   ██████        ██████ ██  ██ ██████ ██████ ██████"
 ];
 
 const HUB = [
-  "            ┌─────────┐",
-  "            │  SKILL  │",
-  "       ┌────┤  ROUTER ├────┐",
-  "       │    └─────────┘    │",
-  "       ▼         ▲         ▼",
-  "    skills    ideas    clients",
+  "            ┌──────────┐",
+  "            │ PARASITE │",
+  "       ┌────┤  SKILL   ├────┐",
+  "       │    └──────────┘    │",
+  "       ▼          ▲          ▼",
+  "    skills     ideas     clients"
 ];
 
-const TAGLINE = "route any request to the right agent skills";
+const TAGLINE = "parasite-skill — inject, enhance, and route agent skills";
 
 // Truecolor support: COLORTERM=truecolor or TERM contains 'truecolor'/'24bit'.
 function supportsTruecolor() {
@@ -99,7 +99,7 @@ export function banner() {
 export function smallLogo() {
   // Compact badge for progress lines (gradient on the brackets only).
   const badge = supportsTruecolor()
-    ? `\x1b[38;2;99;102;241m[\x1b[0m\x1b[38;2;34;211;238mSKILL-ROUTER\x1b[0m\x1b[38;2;45;212;191m]\x1b[0m`
-    : `${CYAN}[SKILL-ROUTER]${RESET}`;
+    ? `\x1b[38;2;99;102;241m[\x1b[0m\x1b[38;2;34;211;238mPARASITE-SKILL\x1b[0m\x1b[38;2;45;212;191m]\x1b[0m`
+    : `${CYAN}[PARASITE-SKILL]${RESET}`;
   return badge;
 }

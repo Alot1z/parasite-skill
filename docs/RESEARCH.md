@@ -1,6 +1,6 @@
 # Research: the agent-skills ecosystem (2026-08-11)
 
-Everything below was gathered from the sources cited, to shape skill-router.
+Everything below was gathered from the sources cited, to shape parasite-skill.
 Patterns adopted are marked **[adopted]**.
 
 ## skills.sh (Vercel Labs) — github.com/vercel-labs/skills, skills.sh
@@ -56,7 +56,7 @@ and the `npx skills` CLI docs.
   development system for Claude Code, OpenCode, and Gemini CLI (a fork of get-shit-done with
   MCP tool integration claiming 80-90% token savings vs native tools).
 - Starred-repo trends (two independent readings, mid-2026): heavy weighting toward agent skills,
-  MCP servers, CLI tooling, and context-engineering — the same clusters skill-router targets.
+  MCP servers, CLI tooling, and context-engineering — the same clusters parasite-skill targets.
   Star counts fluctuate and the two readings disagree at times; treat as approximate ranges:
 
 | Repo | Reading 1 | Reading 2 |
@@ -69,13 +69,13 @@ and the `npx skills` CLI docs.
 | x1xhlol/system-prompts-and-models-of-ai-tools | ~134k views | ~138k |
 | mattpocock/skills | ~20.4k | (community framework) |
 
-Takeaway for skill-router: the ecosystem is shifting from prompt engineering toward
+Takeaway for parasite-skill: the ecosystem is shifting from prompt engineering toward
 context engineering + agentic skill frameworks + token-efficient MCP harnesses — which is
 precisely the design space this package occupies (registry + routing + cadence + MCP-ready).
 
 ## Design consequences
 
-1. Registry is a shared JSON (`~/.agents/skills/.skill-router/registry.json`) read by both the JS and Python engines.
-2. The installer never touches a client skills-dir root: it always installs to `<dir>/skill-router` (tested; an early bug wrote into the root — caught by sandbox tests).
+1. Registry is a shared JSON (`~/.agents/skills/.parasite-skill/registry.json`) read by both the JS and Python engines.
+2. The installer never touches a client skills-dir root: it always installs to `<dir>/parasite-skill` (tested; an early bug wrote into the root — caught by sandbox tests).
 3. Scores are hypotheses; SKILL.md mandates an agent judgment layer (per addyosmani's anti-rationalization approach).
-4. Refs/wikis live in the central registry; `link` creates per-skill junctions/symlinks + `.skill-router.links.json` manifests, never hardcoded vendor content.
+4. Refs/wikis live in the central registry; `link` creates per-skill junctions/symlinks + `.parasite-skill.links.json` manifests, never hardcoded vendor content.

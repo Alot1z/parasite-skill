@@ -1,28 +1,28 @@
-// skill-router CLI — argument parsing, help, dispatch.
+// parasite-skill CLI — argument parsing, help, dispatch.
 import { LOGO } from "./logo.js";
 import { VERSION, loadProjectConfig, mergeConfig } from "./engine.js";
 import * as commands from "./commands/index.js";
 import { CLIENTS, runInstall, runRefresh, runList, runRemove } from "./clients.js";
 import { runMcpAdd, runMcpRemove, runMcpList } from "./mcp-register.js";
 
-const HELP = `skill-router v${VERSION}
+const HELP = `parasite-skill v${VERSION}
 
 Route any request to the right agent skills. One package, every AI client.
 
 USAGE
-  skill-router <command> [flags]
-  npx skill-router <command> [flags]     (node)
-  bunx skill-router <command> [flags]    (bun)
+  parasite-skill <command> [flags]
+  npx parasite-skill <command> [flags]     (node)
+  bunx parasite-skill <command> [flags]    (bun)
 
 COMMANDS
-  install   Install the skill-router skill into one or more AI clients
+  install   Install the parasite-skill skill into one or more AI clients
             (--copy | --link, --all | --agent <ids>, -g/--global | --project,
              --yes, --force)
   refresh   Update all installed copies with the latest SKILL.md
             (--all | --agent <ids>, --copy | --link)
   parasite  Manage runtime extensions without modifying source
             (--status, --add, --remove, --toggle, --hook, --wrap, --protect)
-  list      Show installed skill-router instances per client
+  list      Show installed parasite-skill instances per client
   remove    Remove installed instances (--agent <ids>)
   scan      Re-analyze the whole skill ecosystem, rebuild registry
             (--dirs a,b)
@@ -37,7 +37,7 @@ COMMANDS
   plan      "<request>"     Emit a routed execution plan
   trace     <file>          Count skill usage in a transcript
   link      Create/remove per-skill refs/wiki links (--unlink, --no-default)
-  mcp       MCP control: add|remove|list register/remove the skill-router MCP
+  mcp       MCP control: add|remove|list register/remove the parasite-skill MCP
             server in client configs (no manual config); bare mcp runs the server
   bundle    Build a tarball + install.json manifest for GitHub Pages distribution
   sync      Cloud-sync the skills tree to a git remote (--init URL | --push | --pull)
@@ -46,7 +46,7 @@ COMMANDS
   --version | --help
 
 GLOBAL FLAGS
-  --registry DIR   Central registry dir (default ~/.agents/skills/.skill-router)
+  --registry DIR   Central registry dir (default ~/.agents/skills/.parasite-skill)
   --dirs a,b       Extra scan dirs
   --force          Force rescan / fresh load / replace existing installs
   --json           Machine-readable output
@@ -167,7 +167,7 @@ export async function run(argv) {
   const flags = parseFlags(argv);
   if (flags.badFlags) return 2;
   if (flags.action === "version") {
-    console.log(`skill-router v${VERSION}`);
+    console.log(`parasite-skill v${VERSION}`);
     return 0;
   }
   if (flags.action === "help") {
@@ -189,7 +189,7 @@ export async function run(argv) {
   const ctx = { ...mergeConfig(projectConfig, flags), idea: arg, request: arg, file: rest[0] };
 
   // Log config source if verbose
-  if (projectConfig && process.env.SKILL_ROUTER_VERBOSE) {
+  if (projectConfig && process.env.PARASITE_SKILL_VERBOSE) {
     console.error(`Using project config from: ${projectConfig._path}`);
   }
 

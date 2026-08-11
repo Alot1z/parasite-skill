@@ -76,10 +76,10 @@ export function cmdWikis(args) {
   writeFileSync(
     join(wiki, "Home.md"),
     [
-      "# Skill Router Wiki",
+      "# Parasite Skill Wiki",
       "",
       `${skills.length} skills indexed. ${Object.keys(SETS).length} skill-sets.`,
-      `Generated ${payload.generated_at} by skill-router v${payload.version}.`,
+      `Generated ${payload.generated_at} by parasite-skill v${payload.version}.`,
       "",
       "- [All skills](Skills.md)",
       "- [Categories](Categories.md)",

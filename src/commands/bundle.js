@@ -7,7 +7,7 @@ import { VERSION } from "../engine.js";
 /**
  * Build a distributable bundle: a tarball of the skill payload + install.json
  * manifest. Served from GitHub Pages so users can install with zero npm:
- *   curl -fsSL https://USER.github.io/skill-router/install.sh | bash
+ *   curl -fsSL https://USER.github.io/parasite-skill/install.sh | bash
  */
 export function cmdBundle(ctx = {}) {
   const source = skillSourceDir();
@@ -15,7 +15,7 @@ export function cmdBundle(ctx = {}) {
     console.error(`skill payload not found at ${source}`);
     return 1;
   }
-  const out = ctx.out || join(process.cwd(), "skill-router-bundle.tar.gz");
+  const out = ctx.out || join(process.cwd(), "parasite-skill-bundle.tar.gz");
   const meta = ctx.meta || join(process.cwd(), "install.json");
   const tmp = join(process.cwd(), ".bundle-tmp");
   mkdirSync(tmp, { recursive: true });
@@ -38,10 +38,10 @@ export function cmdBundle(ctx = {}) {
   }
 
   const manifest = {
-    name: "skill-router",
+    name: "parasite-skill",
     version: VERSION,
-    description: "skill-router — route any request to the right agent skills",
-    bundleUrl: "skill-router-bundle.tar.gz",
+    description: "parasite-skill — route any request to the right agent skills",
+    bundleUrl: "parasite-skill-bundle.tar.gz",
     files: ["SKILL.md", "references", "templates", "scripts"],
     install: {
       defaultMode: "copy",

@@ -1,6 +1,6 @@
 {
-  "_comment": "Copy this file to skill-router.json in your project root. All keys optional; CLI flags always win over config values. Config is found by walking up from the current directory.",
-  "registry": "./.skill-router",
+  "_comment": "Copy this file to parasite-skill.json in your project root. All keys optional; CLI flags always win over config values. Config is found by walking up from the current directory.",
+  "registry": "./.parasite-skill",
   "dirs": ["./.agents/skills", "./skills"],
   "defaultSet": "build",
   "force": false,

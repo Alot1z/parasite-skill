@@ -102,9 +102,9 @@ describe("bundle command", () => {
       try {
         const code = cmdBundle({});
         expect(code).toBe(0);
-        expect(existsSync(join(dir, "skill-router-bundle.tar.gz"))).toBe(true);
+        expect(existsSync(join(dir, "parasite-skill-bundle.tar.gz"))).toBe(true);
         const meta = JSON.parse(readFileSync(join(dir, "install.json"), "utf-8"));
-        expect(meta.name).toBe("skill-router");
+        expect(meta.name).toBe("parasite-skill");
         expect(meta.version).toBeTruthy();
       } finally {
         console.log = origLog;

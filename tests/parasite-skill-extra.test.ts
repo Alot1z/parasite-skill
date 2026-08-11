@@ -100,7 +100,7 @@ describe("MCP server protocol", () => {
       params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: {} },
     });
     expect(res.result.protocolVersion).toBe("2024-11-05");
-    expect(res.result.serverInfo.name).toBe("skill-router");
+    expect(res.result.serverInfo.name).toBe("parasite-skill");
     expect(res.result.capabilities.tools).toEqual({});
   });
 

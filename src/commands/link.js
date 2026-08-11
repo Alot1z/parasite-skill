@@ -27,7 +27,7 @@ export function cmdLink(args) {
       if (e.name.startsWith(".") || !e.isDirectory()) continue;
       const skillPath = join(d, e.name);
       if (!existsSync(join(skillPath, "SKILL.md"))) continue;
-      const manifest = join(skillPath, ".skill-router.links.json");
+      const manifest = join(skillPath, ".parasite-skill.links.json");
       const name = e.name;
       if (args.unlink) {
         const errors = [];

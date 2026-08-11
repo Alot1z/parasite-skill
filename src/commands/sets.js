@@ -49,7 +49,7 @@ export function cmdSets(args) {
       return 1;
     }
     if (sets[name].project) {
-      console.error(`'${name}' is defined in skill-router.json — edit the config file directly (project sets are not editable via the editor)`);
+      console.error(`'${name}' is defined in parasite-skill.json — edit the config file directly (project sets are not editable via the editor)`);
       return 1;
     }
     const target = custom[name] ?? { desc: sets[name].desc, members: [...sets[name].members] };
@@ -68,7 +68,7 @@ export function cmdSets(args) {
       return 1;
     }
     if (sets[name]?.project) {
-      console.error(`'${name}' is defined in skill-router.json — edit the config file directly (project sets are not editable via the editor)`);
+      console.error(`'${name}' is defined in parasite-skill.json — edit the config file directly (project sets are not editable via the editor)`);
       return 1;
     }
     const target = custom[name] ?? { desc: sets[name]?.desc, members: [...(sets[name]?.members ?? [])] };
@@ -120,7 +120,7 @@ export function cmdSets(args) {
     console.log(`${name.padEnd(14)} ${set.desc.padEnd(32)} ${present}/${set.members.length} installed${mark}${projectMark}`);
   }
   console.log("\n* = custom set (editable via --new/--add/--remove/--delete)");
-  console.log("(project) = defined in skill-router.json");
+  console.log("(project) = defined in parasite-skill.json");
   console.log("tip: sets --template prints the new-set design template");
   return 0;
 }

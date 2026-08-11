@@ -1,4 +1,4 @@
-// skill-router MCP server — dependency-free stdio transport (JSON-RPC 2.0).
+// parasite-skill MCP server — dependency-free stdio transport (JSON-RPC 2.0).
 // Speaks the Model Context Protocol subset: initialize, ping, tools/list, tools/call.
 // Run:  bun src/mcp-server.js   (or:  node src/mcp-server.js)
 import { createInterface } from "node:readline";
@@ -15,7 +15,7 @@ import {
 import { runList } from "./clients.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "skill-router", version: VERSION };
+const SERVER_INFO = { name: "parasite-skill", version: VERSION };
 
 const TOOLS = [
   {
@@ -63,7 +63,7 @@ const TOOLS = [
   },
   {
     name: "list_installs",
-    description: "List where the skill-router skill is currently installed across clients.",
+    description: "List where the parasite-skill skill is currently installed across clients.",
     inputSchema: { type: "object", properties: {} },
   },
 ];

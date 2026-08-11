@@ -19,7 +19,7 @@ import { banner, smallLogo } from "../logo.js";
 export function cmdParasite(args) {
   console.log(banner());
 
-  // Per-project parasite control from skill-router.json (merged into args):
+  // Per-project parasite control from parasite-skill.json (merged into args):
   //  - "parasite": false                -> injections disabled for this project
   //  - "parasite": { enabled, clients } -> restrict which clients are touched
   //  - "clients": [...]                 -> project-wide client allowlist
@@ -27,11 +27,11 @@ export function cmdParasite(args) {
   if (parasiteCfg && parasiteCfg.enabled === false) {
     if (!args.add && !args.remove && !args.toggle && !args.hook && !args.wrap && !args.protect) {
       console.log('');
-      console.log('  ⛔ parasite is disabled for this project (skill-router.json: "parasite": false)');
+      console.log('  ⛔ parasite is disabled for this project (parasite-skill.json: "parasite": false)');
       console.log('');
       return 0;
     }
-    console.error('parasite is disabled for this project (skill-router.json). Set "parasite": true to re-enable.');
+    console.error('parasite is disabled for this project (parasite-skill.json). Set "parasite": true to re-enable.');
     return 1;
   }
   const allowedClients = new Set(
@@ -59,7 +59,7 @@ export function cmdParasite(args) {
   // Add injection
   const guardClient = (clientId) => {
     if (allowedClients.size && !allowedClients.has(clientId)) {
-      console.error('client "' + clientId + '" is not in this project. allowed clients (skill-router.json)');
+      console.error('client "' + clientId + '" is not in this project. allowed clients (parasite-skill.json)');
       console.error('allowed: ' + [...allowedClients].join(", "));
       return true;
     }
@@ -77,7 +77,7 @@ export function cmdParasite(args) {
       return 1;
     }
     
-    const code = args.code || `// Injection ${Date.now()}\nconsole.log('skill-router parasite active');`;
+    const code = args.code || `// Injection ${Date.now()}\nconsole.log('parasite-skill parasite active');`;
     const type = args.type || "hook";
     const target = args.target || "default";
     const position = args.position || "wrap";
@@ -146,7 +146,7 @@ export function cmdParasite(args) {
     const format = args.format || "vite";
     const hookCode = generateBuildHook({ format, env: args.env });
     
-    const outPath = args.out || `skill-router-parasite-${format}.js`;
+    const outPath = args.out || `parasite-skill-parasite-${format}.js`;
     writeFileSync(outPath, hookCode);
     
     console.log(`\\n  ${smallLogo()} Generated ${format} hook: ${outPath}\\n`);

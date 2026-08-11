@@ -1,6 +1,6 @@
-# skill-router as an MCP server
+# parasite-skill as an MCP server
 
-skill-router exposes its routing engine as a dependency-free MCP server over
+parasite-skill exposes its routing engine as a dependency-free MCP server over
 stdio (JSON-RPC 2.0). Any MCP-compatible host can call `scan`, `validate`,
 `route`, `sets`, `plan`, `refs`, `wikis`, and `list_installs` as tools —
 mirroring the MCP-first, token-efficient approach of tools like
@@ -21,9 +21,9 @@ node src/mcp-server.js
 ```json
 {
   "mcpServers": {
-    "skill-router": {
+    "parasite-skill": {
       "command": "bun",
-      "args": ["E:/E-github-repos/skill-router-soucecode/src/mcp-server.js"]
+      "args": ["E:/E-github-repos/parasite-skill/src/mcp-server.js"]
     }
   }
 }
@@ -32,7 +32,7 @@ node src/mcp-server.js
 **Claude Code** (project `.mcp.json` or `claude mcp add`):
 
 ```bash
-claude mcp add skill-router -- bun E:/E-github-repos/skill-router-soucecode/src/mcp-server.js
+claude mcp add parasite-skill -- bun E:/E-github-repos/parasite-skill/src/mcp-server.js
 ```
 
 **Any MCP host**: point it at the same command/args. Because the server is

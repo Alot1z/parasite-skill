@@ -118,7 +118,7 @@ export function cmdExport(args) {
 
   // ---- LLM-ready JSON ------------------------------------------------------
   const llm = {
-    kind: "skill-router-ecosystem",
+    kind: "parasite-skill-ecosystem",
     version: VERSION,
     generated_at: payload.generated_at ?? new Date().toISOString(),
     counts: {
@@ -146,21 +146,21 @@ export function cmdExport(args) {
     mcp,
     rules: { global: globalRules, per_client: perClientRules },
     project_config: projectInfo,
-    note: "Paths and names only — no file contents or secrets. Regenerate with: skill-router export",
+    note: "Paths and names only — no file contents or secrets. Regenerate with: parasite-skill export",
   };
   mkdirSync(reg, { recursive: true });
   writeFileSync(join(reg, "ecosystem.json"), JSON.stringify(llm, null, 2));
 
   // ---- human-ready ECOSYSTEM.md --------------------------------------------
   const md = [];
-  md.push("# Skill Router Ecosystem — full inventory", "");
-  md.push(`Generated ${llm.generated_at} by skill-router v${VERSION}.`, "");
+  md.push("# Parasite Skill Ecosystem — full inventory", "");
+  md.push(`Generated ${llm.generated_at} by parasite-skill v${VERSION}.`, "");
   md.push(
     `**${skills.length} skills · ${Object.keys(sets).length} skill-sets · ${installedCount} client installs · ` +
       `${llm.counts.extensions} runtime extensions · ${llm.counts.mcp_registered} MCP registrations · ${globalRules.length} rule files.**`,
     "",
   );
-  md.push("Paths and names only — no contents, no secrets. Regenerate anytime: `skill-router export`", "");
+  md.push("Paths and names only — no contents, no secrets. Regenerate anytime: `parasite-skill export`", "");
 
   md.push("## Skills", "", `| Skill | Tags | Languages | Spec | Sets |`, `|---|---|---|---|---|`);
   for (const s of skills) {

@@ -1,4 +1,4 @@
-// fast_scan.rs — skill-router fast inventory scanner.
+// fast_scan.rs — parasite-skill fast inventory scanner.
 // A tiny Rust twin of the scan pass, useful when the skill tree outgrows the
 // JS/Python engines (10k+ SKILL.md files). Pattern borrowed from the Rust CLI
 // tools in the starred-repo research: zero deps, walkdir via std, one pass.

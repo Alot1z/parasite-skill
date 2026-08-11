@@ -7,7 +7,7 @@ export function cmdPlan(args) {
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);
   if (!args.request) {
-    console.error('missing request text: skill-router plan "<request>"');
+    console.error('missing request text: parasite-skill plan "<request>"');
     return 1;
   }
   const allSets = loadSetsWithProject(reg, args.sets);
@@ -18,7 +18,7 @@ export function cmdPlan(args) {
   const plan = [
     `# Execution Plan: ${args.request}`,
     "",
-    `Routed by skill-router v${VERSION} — deterministic scores are hypotheses; the agent layer re-verifies.`,
+    `Routed by parasite-skill v${VERSION} — deterministic scores are hypotheses; the agent layer re-verifies.`,
     "",
     "## Phases",
     "",

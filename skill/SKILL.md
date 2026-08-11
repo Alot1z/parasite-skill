@@ -1,13 +1,13 @@
 ---
-name: skill-router
-description: Routes any request to the right skills and skill-sets, scans the whole skill ecosystem, validates skills against the official spec, generates refs/wikis with adaptive links, and enforces an always-on thinking-skill cadence before, between, and after every tool call. Use when the user asks which skills to use, wants a skill execution plan, wants a skill-set activated, wants the ecosystem analyzed or refs/wikis generated, or invokes /skill-router with flags like --route, --plan, --scan, --validate, --refs, --wikis, --sets, --trace, --link, --force.
+name: parasite-skill
+description: Routes any request to the right skills and skill-sets, scans the whole skill ecosystem, validates skills against the official spec, generates refs/wikis with adaptive links, and enforces an always-on thinking-skill cadence before, between, and after every tool call. Use when the user asks which skills to use, wants a skill execution plan, wants a skill-set activated, wants the ecosystem analyzed or refs/wikis generated, or invokes /parasite-skill with flags like --route, --plan, --scan, --validate, --refs, --wikis, --sets, --trace, --link, --force.
 metadata:
   version: 1.0.0
-  registry: ~/.agents/skills/.skill-router/
+  registry: ~/.agents/skills/.parasite-skill/
   languages: python, typescript
 ---
 
-# Skill Router
+# Parasite Skill
 
 One entry point for the whole skill ecosystem. Instead of manually typing each skill, invoke this skill and let the engine (plus your judgment) choose, order, and re-activate skills during execution.
 
@@ -22,7 +22,7 @@ One entry point for the whole skill ecosystem. Instead of manually typing each s
 
 ## Invocation and Flags
 
-Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or the package CLI `skill-router <command>` (Bun/Node, via `bunx skill-router` / `npx skill-router`). Both share the same `registry.json`.
+Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or the package CLI `parasite-skill <command>` (Bun/Node, via `bunx parasite-skill` / `npx parasite-skill`). Both share the same `registry.json`.
 
 | Flag | What it does |
 |---|---|
@@ -35,7 +35,7 @@ Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or
 | `--refs [--per-skill]` | Generate ref docs (central; `--per-skill` also copies into each skill dir) |
 | `--wikis` | Generate the wiki: Home, Categories, Skills, SkillSets, MultiplicativePairs, graph |
 | `--trace [file]` | Count skill usage in a session transcript |
-| `--link [--unlink]` | Create adaptive links (junction/symlink + `.skill-router.links.json` manifest) so each skill dir points at its refs/wikis. Add `--no-default` to touch only `--dirs` paths (safe for sandbox tests) |
+| `--link [--unlink]` | Create adaptive links (junction/symlink + `.parasite-skill.links.json` manifest) so each skill dir points at its refs/wikis. Add `--no-default` to touch only `--dirs` paths (safe for sandbox tests) |
 | `--dirs a,b` | Scan extra directories (e.g. a project's `.agents/skills`) |
 | `--json` | Machine-readable output for the AI layer |
 | `--force` | Force a rescan / force re-loading always-on skills mid-session |
@@ -44,7 +44,7 @@ Run the engine: `python scripts/conductor.py <command> [flags]` (Python twin) or
 | `--sets --add NAME:member` | Add a skill to a custom set |
 | `--sets --remove NAME:member` | Remove a skill from a custom set |
 | `--sets --delete NAME` | Delete a custom set (built-ins cannot be deleted) |
-| `--mcp add/remove/list` | Auto-register the skill-router MCP server in client configs — no manual config |
+| `--mcp add/remove/list` | Auto-register the parasite-skill MCP server in client configs — no manual config |
 | `--sync --init/--push/--pull` | Cloud-sync the skills tree to a git remote (backup + restore across machines) |
 | `--refresh` | Update all installed copies with the latest SKILL.md |
 | `--agents` | Generate AGENTS.md for the current project from the registry |
@@ -101,10 +101,10 @@ Use `--set <name>` to constrain routing to a specific skill-set. This is useful 
 
 ```bash
 # Route within the 'build' set only
-skill-router route "implement user authentication" --set build
+parasite-skill route "implement user authentication" --set build
 
 # Route within the 'frontend' set only
-skill-router route "create a responsive dashboard" --set frontend
+parasite-skill route "create a responsive dashboard" --set frontend
 ```
 
 The `--set <name>` flag filters the results to only include skills that are members of the specified set. This is different from `--sets --apply NAME` which just prints the load order.
@@ -115,25 +115,25 @@ Create your own skill-sets for project-specific workflows. Custom sets are persi
 
 ```bash
 # Create a new custom set
-skill-router sets --new my-project --members "brainstorming,spec-driven-development,incremental-implementation" --desc "My project workflow"
+parasite-skill sets --new my-project --members "brainstorming,spec-driven-development,incremental-implementation" --desc "My project workflow"
 
 # Add a skill to an existing set
-skill-router sets --add my-project:code-review-and-quality
+parasite-skill sets --add my-project:code-review-and-quality
 
 # Remove a skill from a set
-skill-router sets --remove my-project:code-review-and-quality
+parasite-skill sets --remove my-project:code-review-and-quality
 
 # Delete a custom set
-skill-router sets --delete my-project
+parasite-skill sets --delete my-project
 ```
 
 Custom sets appear with a `*` marker in the sets listing. Built-in sets cannot be deleted, but you can create copies with `--new` and modify those.
 
-Project sets (from `skill-router.json`) appear with a `(project)` marker. They override any same-named set (built-in or custom) while the config is present, are never written to `sets.custom.json`, and are edited by changing the config file — not the `--new/--add/--remove/--delete` editor.
+Project sets (from `parasite-skill.json`) appear with a `(project)` marker. They override any same-named set (built-in or custom) while the config is present, are never written to `sets.custom.json`, and are edited by changing the config file — not the `--new/--add/--remove/--delete` editor.
 
 ## Project Configuration
 
-Each project can define its own defaults via a `skill-router.json` (or `.skill-router.json`) file in the project root. The config is loaded automatically and merged with CLI flags (CLI flags take precedence).
+Each project can define its own defaults via a `parasite-skill.json` (or `.parasite-skill.json`) file in the project root. The config is loaded automatically and merged with CLI flags (CLI flags take precedence).
 
 ### Config File Location
 
@@ -143,7 +143,7 @@ The CLI walks up the directory tree from the current working directory to find a
 
 ```json
 {
-  "registry": "./.skill-router/registry.json",
+  "registry": "./.parasite-skill/registry.json",
   "dirs": ["./skills", "./.agents/skills"],
   "defaultSet": "build",
   "force": false,
@@ -166,7 +166,7 @@ The CLI walks up the directory tree from the current working directory to find a
 
 | Option | Description | Example |
 |---|---|---|
-| `registry` | Path to the registry directory (overrides default) | `"./.skill-router"` |
+| `registry` | Path to the registry directory (overrides default) | `"./.parasite-skill"` |
 | `dirs` | Scan directories (array or comma-separated string) | `["./skills", "./.agents/skills"]` |
 | `defaultSet` | Default skill-set to use for routing (same as `--set NAME`) | `"build"` |
 | `force` | Force rescan on every run | `true` |
@@ -174,7 +174,7 @@ The CLI walks up the directory tree from the current working directory to find a
 | `enabledSets` | **Route-within-set at the project level**: routing only considers members of these sets (union) | `["build", "review"]` |
 | `excludeSkills` | Skills that are never routed to in this project (blacklist) | `["skill-i-never-want"]` |
 | `route` | Default scoring knobs: `top` (default top-N) and `minScore` (drop scores below the floor). CLI `--top` wins | `{"top": 8, "minScore": 0}` |
-| `env` | **Per-project env isolation**: key/value pairs exposed as `ctx.env` and baked into generated parasite hooks/wrappers. Never mutates your shell; for full sandbox isolation of the whole package use `SKILL_ROUTER_HOME` | `{"GSM_API_URL": "http://localhost:3000"}` |
+| `env` | **Per-project env isolation**: key/value pairs exposed as `ctx.env` and baked into generated parasite hooks/wrappers. Never mutates your shell; for full sandbox isolation of the whole package use `PARASITE_SKILL_HOME` | `{"GSM_API_URL": "http://localhost:3000"}` |
 | `parasite` | **Per-project toggle for the enhancement layer**: `false` disables runtime injections in this project ("able not to use it"); `{ "enabled": true, "clients": [...] }` restricts which clients are touched | `{ "enabled": true, "clients": ["claude-code", "cursor"] }` |
 | `clients` | Project-wide client allowlist: only these clients are managed by install/refresh/parasite/export in this project | `["claude-code", "cursor"]` |
 
@@ -182,7 +182,7 @@ CLI flags always take precedence over config values. The config is found by walk
 
 ### Example: Project-Specific Workflow
 
-Create `skill-router.json` in your project root:
+Create `parasite-skill.json` in your project root:
 
 ```json
 {
@@ -194,22 +194,22 @@ Create `skill-router.json` in your project root:
 }
 ```
 
-Now `skill-router route "implement auth"` will automatically use the `build` set, only ever route within `build` ∪ `review`, never suggest `obsolete-skill`, scan your project's skill directories — and the runtime enhancement layer is fully off for this project. Flip `"parasite": true` to re-enable it without touching any other project's setup.
+Now `parasite-skill route "implement auth"` will automatically use the `build` set, only ever route within `build` ∪ `review`, never suggest `obsolete-skill`, scan your project's skill directories — and the runtime enhancement layer is fully off for this project. Flip `"parasite": true` to re-enable it without touching any other project's setup.
 
 ### Environment Variable
 
-`SKILL_ROUTER_HOME` overrides the home base for the registry, installs, sync, MCP, and every command — full environment isolation for sandboxes and tests:
+`PARASITE_SKILL_HOME` overrides the home base for the registry, installs, sync, MCP, and every command — full environment isolation for sandboxes and tests:
 
 ```bash
-SKILL_ROUTER_HOME=/tmp/sandbox skill-router scan   # everything stays in /tmp/sandbox
-SKILL_ROUTER_HOME=/tmp/sandbox skill-router route "idea"
+PARASITE_SKILL_HOME=/tmp/sandbox parasite-skill scan   # everything stays in /tmp/sandbox
+PARASITE_SKILL_HOME=/tmp/sandbox parasite-skill route "idea"
 ```
 
-Set `SKILL_ROUTER_VERBOSE=1` to see which config file is being loaded:
+Set `PARASITE_SKILL_VERBOSE=1` to see which config file is being loaded:
 
 ```bash
-SKILL_ROUTER_VERBOSE=1 skill-router route "implement auth"
-# Output: Using project config from: /path/to/project/skill-router.json
+PARASITE_SKILL_VERBOSE=1 parasite-skill route "implement auth"
+# Output: Using project config from: /path/to/project/parasite-skill.json
 ```
 
 ## Refreshing Installed Copies
@@ -218,10 +218,10 @@ When you update the source `skill/SKILL.md` (e.g., to add new documentation), us
 
 ```bash
 # Refresh all installed instances
-skill-router refresh
+parasite-skill refresh
 
 # Refresh with verbose output
-SKILL_ROUTER_VERBOSE=1 skill-router refresh
+PARASITE_SKILL_VERBOSE=1 parasite-skill refresh
 ```
 
 This updates every installed instance with the latest SKILL.md without requiring you to remember which clients you installed to. The command:
@@ -233,7 +233,7 @@ This updates every installed instance with the latest SKILL.md without requiring
 Use `--agent <ids>` to refresh only specific clients:
 
 ```bash
-skill-router refresh --agent claude-code,cursor
+parasite-skill refresh --agent claude-code,cursor
 ```
 
 ## Parasite Extension System
@@ -243,7 +243,7 @@ The parasite system enables runtime injection without modifying source code. It 
 ### Core Concepts
 
 - **Runtime Injection**: Add enhancements that run at startup without touching original files
-- **Extension Folders**: Each client gets a `.skill-router-extensions/` directory
+- **Extension Folders**: Each client gets a `.parasite-skill-extensions/` directory
 - **Build-time Hooks**: Generate Vite/webpack plugins for build-time injection
 - **Server Wrapping**: Wrap upstream servers with enhancement layers
 - **Traceability Protection**: Obfuscate extracted code to prevent tracing
@@ -252,28 +252,28 @@ The parasite system enables runtime injection without modifying source code. It 
 
 ```bash
 # Show injection status for all clients
-skill-router parasite --status
+parasite-skill parasite --status
 
 # Add a runtime injection
-skill-router parasite --add --agent claude-code --type hook --code "console.log('active')"
+parasite-skill parasite --add --agent claude-code --type hook --code "console.log('active')"
 
 # Toggle an injection on/off
-skill-router parasite --toggle injection-1234567890 --enable
+parasite-skill parasite --toggle injection-1234567890 --enable
 
 # Remove an injection
-skill-router parasite --remove injection-1234567890
+parasite-skill parasite --remove injection-1234567890
 
 # Generate Vite build hook
-skill-router parasite --hook vite --out vite-plugin.js
+parasite-skill parasite --hook vite --out vite-plugin.js
 
 # Generate webpack build hook
-skill-router parasite --hook webpack --out webpack-plugin.js
+parasite-skill parasite --hook webpack --out webpack-plugin.js
 
 # Generate server wrapper
-skill-router parasite --wrap --server ./upstream-server.js --out wrapped-server.js
+parasite-skill parasite --wrap --server ./upstream-server.js --out wrapped-server.js
 
 # Protect code traceability
-skill-router parasite --protect --file input.js --level medium --out protected.js
+parasite-skill parasite --protect --file input.js --level medium --out protected.js
 ```
 
 ### Injection Types
@@ -321,10 +321,10 @@ The deterministic scorer is keyword/IDF-based. It cannot read intent. After `--r
 
 ## Registry, Refs, Wikis, Links
 
-- **Registry:** `~/.agents/skills/.skill-router/registry.json` — single source of truth, shared by Python and TypeScript engines.
+- **Registry:** `~/.agents/skills/.parasite-skill/registry.json` — single source of truth, shared by Python and TypeScript engines.
 - **Refs:** `refs/index.md` + `refs/<skill>/index.md` (generated from templates/ref-skill.md).
 - **Wikis:** `wikis/Home.md`, `wikis/Categories.md`, `wikis/Skills.md`, `wikis/SkillSets.md`, `wikis/MultiplicativePairs.md`, `wikis/graph.dot`, `wikis/graph.mmd`.
-- **Links:** `--link` creates, per skill dir, a `refs` and `wiki` junction/symlink into the central registry plus a `.skill-router.links.json` manifest (the portable fallback). This gives every skill dir live pointers without hardcoding content into vendor skills.
+- **Links:** `--link` creates, per skill dir, a `refs` and `wiki` junction/symlink into the central registry plus a `.parasite-skill.links.json` manifest (the portable fallback). This gives every skill dir live pointers without hardcoding content into vendor skills.
 
 ## Verification
 

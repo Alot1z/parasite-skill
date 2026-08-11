@@ -4,13 +4,13 @@ export function cmdRoute(args) {
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);
   if (!args.idea) {
-    console.error('missing idea text: skill-router route "<idea>" [--set <name>]');
+    console.error('missing idea text: parasite-skill route "<idea>" [--set <name>]');
     return 1;
   }
   const allSets = loadSetsWithProject(reg, args.sets);
   let { scored, setScores } = scoreIdea(payload, args.idea, allSets);
 
-  // Project-level routing controls from skill-router.json (merged into args):
+  // Project-level routing controls from parasite-skill.json (merged into args):
   //  - excludeSkills: never route to these skills
   //  - enabledSets:   only route within the members of these sets
   //  - route.minScore: drop scores below the floor

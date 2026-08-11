@@ -17,11 +17,11 @@ function tmpSkill(name, desc) {
 }
 
 describe("loadProjectConfig", () => {
-  test("finds skill-router.json walking up from a subdirectory", () => {
+  test("finds parasite-skill.json walking up from a subdirectory", () => {
     const base = join(tmpdir(), `sr-walk-${Date.now()}`);
     const nested = join(base, "a", "b");
     mkdirSync(nested, { recursive: true });
-    writeFileSync(join(base, "skill-router.json"), JSON.stringify({ defaultSet: "build" }), "utf-8");
+    writeFileSync(join(base, "parasite-skill.json"), JSON.stringify({ defaultSet: "build" }), "utf-8");
     try {
       const cfg = loadProjectConfig(nested);
       expect(cfg).not.toBeNull();
@@ -32,10 +32,10 @@ describe("loadProjectConfig", () => {
     }
   });
 
-  test("also accepts the dotted .skill-router.json name", () => {
+  test("also accepts the dotted .parasite-skill.json name", () => {
     const base = join(tmpdir(), `sr-dotted-${Date.now()}`);
     mkdirSync(base, { recursive: true });
-    writeFileSync(join(base, ".skill-router.json"), JSON.stringify({ force: true }), "utf-8");
+    writeFileSync(join(base, ".parasite-skill.json"), JSON.stringify({ force: true }), "utf-8");
     try {
       const cfg = loadProjectConfig(join(base, "src"));
       expect(cfg).not.toBeNull();

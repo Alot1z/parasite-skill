@@ -1,5 +1,5 @@
 // MCP auto-registration — the "no manual config" path.
-// Registers the skill-router MCP server into each client's config file so the
+// Registers the parasite-skill MCP server into each client's config file so the
 // user never touches JSON by hand. Mirrors how freebuff/codebuff-style CLIs
 // self-configure their tooling.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -7,8 +7,8 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { banner, smallLogo } from "./logo.js";
 
-const SR = "skill-router";
-const HOME = () => process.env.SKILL_ROUTER_HOME || homedir();  // || so "" falls back
+const SR = "parasite-skill";
+const HOME = () => process.env.PARASITE_SKILL_HOME || homedir();  // || so "" falls back
 
 // Where the MCP server entry point lives (this package's src/mcp-server.js).
 // Works when run from the repo or from an installed copy inside a client dir.
@@ -31,7 +31,7 @@ export function mcpServerEntry() {
 
 // Runtime preference: node is universal; bun is faster to boot.
 export function mcpRuntime(pref) {
-  const bun = process.env.SKILL_ROUTER_RUNTIME ?? (process.argv[0] && process.argv[0].toLowerCase().includes("bun") ? "bun" : null);
+  const bun = process.env.PARASITE_SKILL_RUNTIME ?? (process.argv[0] && process.argv[0].toLowerCase().includes("bun") ? "bun" : null);
   if (pref === "bun" || bun) return { command: "bun", args: ["run"] };
   return { command: process.execPath || "node", args: [] };
 }
@@ -126,7 +126,7 @@ function entryFor(runtime) {
 
 // ---------------------------------------------------------------- commands
 
-/** Register (or update) skill-router in each available client config. */
+/** Register (or update) parasite-skill in each available client config. */
 export function runMcpAdd(args = {}) {
   const runtime = args.runtime;
   const entry = entryFor(runtime);
@@ -160,7 +160,7 @@ export function runMcpAdd(args = {}) {
   return 0;
 }
 
-/** Remove skill-router entries from client configs. */
+/** Remove parasite-skill entries from client configs. */
 export function runMcpRemove(args = {}) {
   const rows = [];
   let any = false;
@@ -182,14 +182,14 @@ export function runMcpRemove(args = {}) {
     }
   }
   if (!any) {
-    console.log("skill-router MCP not registered in any target config");
+    console.log("parasite-skill MCP not registered in any target config");
     return 0;
   }
   for (const r of rows) console.log(`  ${smallLogo()} MCP removed: ${r.label} -> ${r.file}`);
   return 0;
 }
 
-/** Data getter: which configs currently reference skill-router (for export/status). */
+/** Data getter: which configs currently reference parasite-skill (for export/status). */
 export function mcpRegistrationStatus() {
   const rows = [];
   for (const t of TARGETS) {
@@ -206,9 +206,9 @@ export function mcpRegistrationStatus() {
   return rows;
 }
 
-/** Show which configs currently reference skill-router. */
+/** Show which configs currently reference parasite-skill. */
 export function runMcpList() {
-  console.log("skill-router MCP registration:");
+  console.log("parasite-skill MCP registration:");
   let found = 0;
   for (const t of TARGETS) {
     const file = t.file();
@@ -222,6 +222,6 @@ export function runMcpList() {
       console.log(`  [ -] ${t.label} -> ${file}`);
     }
   }
-  console.log(found ? `\n${found} client(s) registered` : "\nnone registered — run `skill-router mcp add`");
+  console.log(found ? `\n${found} client(s) registered` : "\nnone registered — run `parasite-skill mcp add`");
   return found ? 0 : 1;
 }
