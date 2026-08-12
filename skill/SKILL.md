@@ -38,10 +38,10 @@ Full surface (`tools`, `agents`, `llm`, `export`, `sync`, `link`, `mcp`, `refs`,
 ## Always-on cadence
 
 - **START**: `tractatus-thinking` -> `sequential-thinking` -> domain verification (`deepwiki`/`context7`/`find-docs`) when facts need checking.
-- **BETWEEN**: `doubt-driven-development` before non-trivial decisions; `debug-thinking` on failure; `context-engineering` on drift; `stop-slop` before prose.
+- **BETWEEN**: apply the loaded method of `doubt-driven-development` before non-trivial decisions; `debug-thinking` on failure; `context-engineering` on drift; `stop-slop` before prose.
 - **AFTER**: `verification-before-completion` + `code-review-and-quality` after milestones.
 
-Re-invoke thinking skills when the phase changes. Do not load every thinking doc into chat; load the selected one.
+Token budget: load each thinking skill once per phase, extract only the section the step needs, and never re-inject a doc you already hold. Re-load only when the phase changes, the source changed, or `--force` is invoked. Details in `references/always-on.md`.
 
 ## Privacy
 

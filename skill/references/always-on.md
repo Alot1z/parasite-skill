@@ -38,6 +38,20 @@ Output: a 3-line plan statement (what, why, how) before the first tool call.
 | R4 | Every milestone ends with verification; every final message ends with the AFTER set |
 | R5 | If the user invokes `/parasite-skill`, the cadence applies to the routed task too |
 
+## Token Budget
+
+Every `skill` tool load injects that skill's full document into the session, so blind re-invocation is the biggest token cost in this cadence. Rules:
+
+| Rule | Behavior |
+|---|---|
+| T1 | Load each thinking skill **once per phase**. Between tool calls, *apply* the already-loaded method; do not re-load the same doc. |
+| T2 | Extract only the section the current step needs (e.g. the doubt cycle, not the full 243-line document). Never re-inject a doc you already hold in context. |
+| T3 | Re-load only on phase change, local source change, or explicit `--force`. |
+| T4 | If a thinking skill's body is longer than ~120 lines, summarize its method into one or two sentences after the first load and keep working from that. |
+| T5 | The final summary states the outcome, not the cadence. Do not narrate which skills were loaded. |
+
+This is not a license to skip thinking — it caps the cost of loading it.
+
 ## Why
 
-Context degrades. Assumptions silently become facts. Re-invoking thinking skills between tool calls re-grounds the session and catches wrong directions while course-correction is cheap (per doubt-driven-development and context-engineering).
+Context degrades. Assumptions silently become facts. Applying thinking skills between tool calls re-grounds the session and catches wrong directions while course-correction is cheap (per doubt-driven-development and context-engineering).
