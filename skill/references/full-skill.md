@@ -319,6 +319,30 @@ The deterministic scorer is keyword/IDF-based over two signal layers: name + des
 4. Present the final plan with rationale: "using `thinking` + `docs` because the request is a specification task".
 5. Execute with the cadence, re-invoking thinking skills between tool calls, not only at the start.
 
+## Current Command Surface
+
+The SKILL.md injection carries only the 5 core commands. The full surface:
+
+```bash
+parasite-skill scan [--dirs a,b] [--force]
+parasite-skill compose "<request>" [--top N] [--json]
+parasite-skill route "<idea>" [--top N] [--set NAME] [--json]
+parasite-skill plan "<request>" [--top N] [--json]
+parasite-skill validate | doctor [--json]
+parasite-skill refs [--per-skill] | wikis | export [--public] [--json]
+parasite-skill link [--unlink] | mcp add|remove|list | sync --push|--pull [--dry-run]
+parasite-skill tools list|run|run-batch|verify|audit|docs|policy|history|ledger|gc
+parasite-skill agents list|show <profile> | agents run <profile> "<request>" [--dry-run] [--strict] [--json]
+parasite-skill llm "<request>" [--tool-dry-run] [--json]
+```
+
+- `tools` exposes skill scripts as callable AI tools (MCP: `skill_tools_list/run/audit`). Tools execute only on explicit invocation — never from routing alone. Policy gate: `parasite-skill.json` `tools` block (`allow`/`deny`/`env`/`timeoutMs`, `scoped` per `profile:`/`sets:`); skills can declare `tools:` frontmatter with `argsSchema`; `--json-args` validates before running (exit 3 on invalid).
+- `tools gc` prunes stale reports/ledger by age/keep; project `gc` TTL policy (`ageDays`, `keep`, `ledger`, `auto`, `intervalDays`) is the default; `tools gc --status` shows posture; `tools ledger --stats|--export|--purge` manages the audit ledger (corrupt lines exit 2).
+- `doctor` runs the CI gates locally: spec, tool readiness, baseline, config parse, MCP registration, ledger integrity, registry freshness.
+- `agents run` executes a profile workflow, writes a report; `--dry-run` previews, `--strict` fails on blocked tools, `--min-tools N` gates on success count.
+- `llm` does bounded native tool-calling against an external OpenAI-compatible endpoint (opt-in, HTTPS, `--allow-remote`), `--tool-dry-run` previews, `--json` returns a `tool_calls` trace.
+- `export` records the tool inventory, gc posture, and sync backup state; `--public` strips filesystem paths.
+
 ## Registry, Refs, Wikis, Links
 
 - **Registry:** `~/.agents/skills/.parasite-skill/registry.json` — single source of truth, shared by Python and TypeScript engines.

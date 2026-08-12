@@ -167,12 +167,13 @@ most of it, and CI grew from a smoke test into a release gate.
 ### Changed
 
 - The test suite grew from 120 to 206 tests across this release.
-- `skill/SKILL.md` cut from 171 to 58 lines: the injected skill is now a
-  compact dispatch doc (contract, core commands, cadence, privacy
-  boundary). Flag tables, sets, project config, and the parasite layer
-  moved to `references/full-skill.md`, read on demand — installing or
-  refreshing no longer pushes a 336-line document into every chat
-  session that invokes the skill.
+- `skill/SKILL.md` cut from 336 to 46 lines across two passes: the
+  injected skill is now a compact dispatch doc (contract, 5 core
+  commands, cadence, privacy boundary). Flag tables, sets, project
+  config, the parasite layer, and the full command surface moved to
+  `references/full-skill.md`, read on demand — installing or refreshing
+  no longer pushes a long document into every chat session that invokes
+  the skill.
 - CI is now a release gate: it writes the audit baseline first (approving
   the shipped subprocess-using scripts), then runs doctor, verify,
   baseline-diff, and `agents run --dry-run --strict` in an isolated
