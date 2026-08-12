@@ -358,7 +358,10 @@ results back in a loop (max `--max-tool-calls` iterations, default 8) until the
 model produces a final answer. Disable with `--no-tools`. Add `--tool-dry-run`
 to preview the model's tool calls instead: each requested tool is resolved and
 reported as the exact command that *would* run, but nothing is ever executed or
-recorded.
+recorded. The Python twin's `llm` tool mirrors this loop end-to-end: it
+executes model-requested tools through the shared `_run_tool_once` path (same
+resolve/run/ledger semantics as `skill_tools_run`), loops the results back, and
+respects `tool_dry_run` and `max_tool_calls` — parity with the JS twin.
 
 Agent run reports now carry each tool's static-audit `risk` (`tool_runs[*].risk`
 in the saved JSON and `[risk X]` markers in the markdown), and `compose`/`plan`
@@ -393,7 +396,12 @@ parsing the chat response.
 
 MCP hosts get the same health check as the CLI: both twins now expose a
 `doctor` tool (registry load, spec validation, tool readiness, and — in the
-JavaScript twin — the audit-baseline diff and project-config parse).
+JavaScript twin — the audit-baseline diff, project-config parse, and an MCP
+registration check that fails on unreadable client config files). The Python
+twin also gains `skill_tools_gc` (`tools gc` parity: posture with `status`,
+prune by `age_days`/`keep`, `dry_run` previews) and its `export` reports the
+gc posture (`last_sweep_ms`/`next_sweep_ms`/`stale`) plus audit-ledger stats
+(a superset of the JS export, which carries the same gc posture).
 
 ## GitHub Pages distribution
 

@@ -219,7 +219,17 @@ def scan_assets(skill_path: Path, max_files: int = 240) -> list[dict]:
         if not root.is_dir():
             continue
         for f in sorted(root.rglob("*")):
-            if len(assets) >= max_files or not f.is_file() or any(part.startswith(".") for part in f.parts):
+            if len(assets) >= max_files or not f.is_file():
+                continue
+            # Skip dot-files *inside the skill dir* only: checking the absolute
+            # path parts would drop every asset when the skills root itself is
+            # a dot-directory (e.g. PARASITE_SKILL_HOME/.agents/skills), which
+            # made the python twin's tool surface empty after a real scan.
+            try:
+                rel_parts = f.relative_to(skill_path).parts
+            except ValueError:
+                continue
+            if any(part.startswith(".") for part in rel_parts):
                 continue
             if SENSITIVE_ASSET_NAME.search(f.name):
                 continue

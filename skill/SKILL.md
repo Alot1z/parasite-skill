@@ -114,10 +114,17 @@ uses, and `skill_tools_history` reads it with the same filters as
 `tools history`, so `trace` and gc ledger pruning work in python-only
 environments too. `doctor` runs the same gates as CI in one
 command: spec validation,
-tool readiness, audit baseline, and project-config parse — and is also exposed
-to MCP hosts as a `doctor` tool in both twins. `export` includes a `tools`
-array (name/skill/language/risk) so the AI layer knows the executable surface,
-plus the gc policy and sync backup posture; `export --public` strips
+tool readiness, audit baseline, project-config parse, and an MCP registration
+check — and is also exposed to MCP hosts as a `doctor` tool in both twins. The
+Python twin also exposes `skill_tools_gc` (the `tools gc` surface: posture via
+`status`, prune by `age_days`/`keep`, `dry_run` previews) and its `llm` tool
+runs the same native tool-calling loop as the JS twin — executing
+model-requested tools through the shared run path and looping results back
+bounded by `max_tool_calls`, with `tool_dry_run` to preview instead. `export`
+includes a `tools` array (name/skill/language/risk) so the AI layer knows the
+executable surface, plus the gc policy/posture (`last_sweep_ms`/
+`next_sweep_ms`/`stale`), audit-ledger stats (python twin; a superset of the
+JS export's gc posture), and sync backup posture; `export --public` strips
 filesystem paths for sharing and `export --json` prints the inventory.
 `sync --push/--pull --dry-run` previews what a push would commit or a pull
 would fetch without changing anything. `llm --json` returns a `tool_calls`

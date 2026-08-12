@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { loadProjectConfig, loadRegistry, registryDir } from "../engine.js";
 import { auditSkillTools, filterToolsByPolicy, listSkillTools, resolveToolRun } from "../ai-tools.js";
 import { planGc, runAutoGc } from "./tools.js";
+import { mcpRegistrationStatus } from "../mcp-register.js";
 
 export function cmdDoctor(args = {}) {
   const reg = registryDir(args.registry);
@@ -102,6 +103,40 @@ export function cmdDoctor(args = {}) {
     else ok("gc", stale ? `${stale} stale artifact(s) under the gc policy (age ${gcPolicy.ageDays ?? "-"}d, keep ${gcPolicy.keep ?? "-"}); run tools gc` : "no stale artifacts under the gc policy");
   } else {
     ok("gc", "no gc TTL policy configured (parasite-skill.json \"gc\": { \"ageDays\": N, \"keep\": N })");
+  }
+
+  // 7. MCP registration: every client config file that exists must parse, and
+  // we report how many reference the parasite-skill server. A corrupt config
+  // is a failing check (CI can catch a broken `mcp add`); absence of
+  // registration is informational so fresh machines stay green. The whole
+  // block is defensive: mcpRegistrationStatus itself can throw on a malformed
+  // config (readJson returns null and the target getters dereference it), so a
+  // throw is caught and reported as the failing check instead of crashing
+  // doctor with an unhandled exception.
+  let mcpRegistered = 0;
+  let mcpCorrupt = 0;
+  const corruptLabels = [];
+  try {
+    const mcpRows = mcpRegistrationStatus();
+    for (const row of mcpRows) {
+      if (!existsSync(row.file)) continue;
+      try {
+        JSON.parse(readFileSync(row.file, "utf-8"));
+      } catch {
+        mcpCorrupt++;
+        corruptLabels.push(row.label);
+      }
+      if (row.registered) mcpRegistered++;
+    }
+    if (mcpCorrupt) {
+      fail("mcp", `${mcpCorrupt} client config file(s) unreadable: ${corruptLabels.join(", ")}`);
+    } else if (mcpRegistered) {
+      ok("mcp", `${mcpRegistered} client(s) registered`);
+    } else {
+      ok("mcp", "no MCP client registered — run `parasite-skill mcp add`");
+    }
+  } catch (err) {
+    fail("mcp", `MCP registration check failed: ${err.message ?? err}`);
   }
 
   if (args.json) {

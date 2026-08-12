@@ -1,6 +1,7 @@
 import { describe, expect, test, afterEach } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync, utimesSync } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scan, composePayload, mergeConfig } from "../src/engine.js";
@@ -435,6 +436,183 @@ describe("Python MCP twin parity", () => {
     ].join("; ");
     const error = execFileSync(PY, ["-c", code], { encoding: "utf8" }).trim();
     expect(error).toContain("denied");
+  });
+
+  test("python twin llm executes a native tool-calling loop against a local endpoint", async () => {
+    const base = join(tmpdir(), `sr-py-llm-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const skillDir = join(base, ".agents", "skills", "demo-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n");
+    writeFileSync(join(skillDir, "scripts", "hello.py"), 'print("hello from tool")\n');
+    writeFileSync(
+      join(regDir, "registry.json"),
+      JSON.stringify({
+        skills: [{ name: "demo-skill", path: skillDir, assets: [{ path: "scripts/hello.py", group: "scripts", language: "python" }] }],
+      }),
+    );
+    // Stub OpenAI-compatible endpoint: first round asks for a tool call, the
+    // second returns the final answer once the tool result has looped back.
+    let calls = 0;
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        calls++;
+        const messages = JSON.parse(body).messages ?? [];
+        const hasToolResult = messages.some((m) => m.role === "tool");
+        let payload;
+        if (hasToolResult) {
+          payload = { choices: [{ message: { role: "assistant", content: "grounded answer" } }] };
+        } else {
+          payload = {
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [{ id: "call-1", type: "function", function: { name: "demo-skill__hello", arguments: "{}" } }],
+                },
+              },
+            ],
+          };
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(payload));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    const code = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, 'skill/scripts')",
+      "import mcp_server",
+      `text, code = mcp_server.run_tool('llm', {'request': 'run the tool', 'endpoint': 'http://127.0.0.1:${port}/v1/chat/completions', 'model': 'test', 'max_tool_calls': 3})`,
+      "print(json.dumps({'ok': json.loads(text)['ok'], 'response': json.loads(text)['response'], 'trace': json.loads(text)['tool_calls']}))",
+    ].join("; ");
+    // execFileSync would block this process and starve the HTTP server above,
+    // so run python asynchronously while the server keeps serving.
+    const py = spawn(PY, ["-c", code]);
+    let stdout = "";
+    py.stdout.on("data", (chunk) => (stdout += chunk));
+    const exitCode = await new Promise<number | null>((resolve) => py.on("close", resolve));
+    expect(exitCode).toBe(0);
+    const out = JSON.parse(stdout.trim());
+    expect(out.ok).toBe(true);
+    expect(out.response).toBe("grounded answer");
+    expect(out.trace).toHaveLength(1);
+    expect(out.trace[0].name).toBe("demo-skill__hello");
+    expect(out.trace[0].ok).toBe(true);
+    expect(calls).toBe(2);
+    // The executed tool was recorded to the shared audit ledger.
+    expect(readFileSync(join(regDir, "tool-runs.jsonl"), "utf-8")).toContain("demo-skill__hello");
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  test("python twin scan discovers assets under a dot-directory skills root (windows regression)", () => {
+    const base = join(tmpdir(), `sr-py-scan-${Date.now()}`);
+    bases.push(base);
+    const skillDir = join(base, ".agents", "skills", "demo-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n");
+    writeFileSync(join(skillDir, "scripts", "hello.py"), 'print("hi")\n');
+    const code = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(join(process.cwd(), "skill", "scripts")) + ")",
+      "import conductor",
+      "s = conductor.scan_skill_dir(conductor.Path(" + JSON.stringify(skillDir) + "))",
+      "print(json.dumps(s['assets']))",
+    ].join("; ");
+    const assets = JSON.parse(execFileSync(PY, ["-c", code], { encoding: "utf8" }).trim());
+    expect(assets.some((a: { path: string }) => a.path === "scripts/hello.py")).toBe(true);
+  });
+
+  test("python twin export reports gc posture and ledger stats (JS export parity)", () => {
+    const base = join(tmpdir(), `sr-py-export-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const skillDir = join(base, ".agents", "skills", "demo-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n");
+    writeFileSync(join(skillDir, "scripts", "hello.py"), 'print("hi")\n');
+    writeFileSync(
+      join(regDir, "registry.json"),
+      JSON.stringify({ skills: [{ name: "demo-skill", path: skillDir, assets: [{ path: "scripts/hello.py", group: "scripts", language: "python" }] }] }),
+    );
+    writeFileSync(join(base, "parasite-skill.json"), JSON.stringify({ gc: { ageDays: 30, keep: 5, auto: true } }));
+    const scriptsDir = join(process.cwd(), "skill", "scripts");
+    const code = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('export', {'public': True})",
+      "eco = json.loads(text)",
+      "print(json.dumps({'gc': eco.get('gc'), 'ledger': eco.get('ledger')}))",
+    ].join("; ");
+    // project_gc() walks up from the process cwd, so run from the sandbox base.
+    const parsed = JSON.parse(execFileSync(PY, ["-c", code], { cwd: base, encoding: "utf8" }).trim());
+    expect(parsed.gc).not.toBeNull();
+    expect(parsed.gc.age_days).toBe(30);
+    expect(parsed.gc.auto).toBe(true);
+    expect(typeof parsed.gc.last_sweep_ms).toBe("number");
+    expect(parsed.ledger).toMatchObject({ entries: 0, bytes: 0 });
+  });
+
+  test("python twin skill_tools_gc reports posture and prunes with a dry-run", () => {
+    const base = join(tmpdir(), `sr-py-gc-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const agentsDir = join(regDir, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    mkdirSync(join(base, ".agents", "skills", "demo-skill"), { recursive: true });
+    const stale = join(agentsDir, "stale-report.json");
+    writeFileSync(stale, JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    utimesSync(stale, new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
+    writeFileSync(join(base, "parasite-skill.json"), JSON.stringify({ gc: { ageDays: 30, auto: true } }));
+    const scriptsDir = join(process.cwd(), "skill", "scripts");
+    const statusCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_gc', {'status': True})",
+      "print(json.dumps(json.loads(text)))",
+    ].join("; ");
+    const status = JSON.parse(execFileSync(PY, ["-c", statusCode], { cwd: base, encoding: "utf8" }).trim());
+    expect(status.stale.agent_files).toBe(1);
+    // No sweep has run yet, so last/next are legitimately null.
+    expect(status.last_sweep_ms).toBeNull();
+    expect(status.throttled).toBe(false);
+    // Dry-run reports the prune without deleting.
+    const dryCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_gc', {'age_days': 30, 'dry_run': True})",
+      "print(json.dumps(json.loads(text)))",
+    ].join("; ");
+    const dry = JSON.parse(execFileSync(PY, ["-c", dryCode], { cwd: base, encoding: "utf8" }).trim());
+    expect(dry.dry_run).toBe(true);
+    expect(dry.removed.agent_files).toEqual(["stale-report.json"]);
+    expect(existsSync(stale)).toBe(true);
+    // Applying the sweep deletes it.
+    const applyCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_gc', {'age_days': 30})",
+      "print(json.dumps(json.loads(text)))",
+    ].join("; ");
+    execFileSync(PY, ["-c", applyCode], { cwd: base, encoding: "utf8" });
+    expect(existsSync(stale)).toBe(false);
   });
 });
 
@@ -1769,6 +1947,25 @@ describe("MCP doctor tool", () => {
     ].join("; ");
     const ok = execFileSync(PY, ["-c", doctorCode], { encoding: "utf8" }).trim();
     expect(ok).toBe("True");
+  });
+
+  test("doctor --json includes an mcp registration check", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdDoctor({ registry, dirs, json: true })).toBe(0);
+      const json = JSON.parse(out.join("\n"));
+      const mcp = json.checks.find((c: { check: string }) => c.check === "mcp");
+      expect(mcp).toBeTruthy();
+      expect(mcp.ok).toBe(true);
+    } finally {
+      console.log = orig;
+    }
   });
 
   test("python twin doctor fails when the registry is missing", () => {

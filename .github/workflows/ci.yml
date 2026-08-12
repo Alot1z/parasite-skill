@@ -110,3 +110,80 @@ jobs:
           echo "$out" | grep -q "auto-gc: skipped"
           test -f .agents/skills/.parasite-skill/agents/stale-report.json
           node "$GITHUB_WORKSPACE/bin/parasite-skill.js" doctor --json >/dev/null
+      - name: Python-twin parity gate (export gc posture + gc tool + doctor)
+        shell: bash
+        env:
+          PARASITE_SKILL_HOME: "${{ runner.temp }}/ps-py-home"
+        run: |
+          set -euo pipefail
+          mkdir -p "$PARASITE_SKILL_HOME/.agents/skills/demo-skill/scripts" \
+                   "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill"
+          printf '%s\n' '---' 'name: demo-skill' 'description: Debug failing tests.' '---' \
+            > "$PARASITE_SKILL_HOME/.agents/skills/demo-skill/SKILL.md"
+          printf '%s\n' 'print("hi")' > "$PARASITE_SKILL_HOME/.agents/skills/demo-skill/scripts/hello.py"
+          python3 - <<'PY'
+          import json, os
+          base = os.environ["PARASITE_SKILL_HOME"]
+          reg = os.path.join(base, ".agents", "skills", ".parasite-skill")
+          skill = os.path.join(base, ".agents", "skills", "demo-skill")
+          json.dump({"skills": [{"name": "demo-skill", "path": skill, "assets": [{"path": "scripts/hello.py", "group": "scripts", "language": "python"}]}]},
+                    open(os.path.join(reg, "registry.json"), "w"))
+          PY
+          # The gc TTL policy drives the posture + the scheduled sweep.
+          printf '%s\n' '{ "gc": { "ageDays": 30, "keep": 20, "auto": true } }' \
+            > "$PARASITE_SKILL_HOME/parasite-skill.json"
+          cd "$PARASITE_SKILL_HOME"
+          python3 - <<'PY'
+          import json, os, sys
+          sys.path.insert(0, os.path.join(os.environ["GITHUB_WORKSPACE"], "skill", "scripts"))
+          import mcp_server
+          # export parity: gc posture block + ledger stats (JS export shape)
+          text, code = mcp_server.run_tool("export", {"public": True})
+          assert code == 0, f"python export failed: {text}"
+          eco = json.loads(text)
+          assert eco["gc"] is not None and "last_sweep_ms" in eco["gc"], f"python export missing gc posture: {eco.get('gc')}"
+          assert isinstance(eco["ledger"], dict) and "entries" in eco["ledger"], "python export missing ledger stats"
+          # gc tool: status reports posture; dry-run prunes nothing.
+          text, code = mcp_server.run_tool("skill_tools_gc", {"status": True})
+          assert code == 0 and "last_sweep_ms" in json.loads(text), f"gc status failed: {text}"
+          text, code = mcp_server.run_tool("skill_tools_gc", {"age_days": 30, "dry_run": True})
+          assert code == 0 and json.loads(text)["dry_run"] is True, f"gc dry-run failed: {text}"
+          # doctor parity stays green in the isolated home.
+          text, code = mcp_server.run_tool("doctor", {})
+          assert code == 0 and json.loads(text)["ok"] is True, f"python doctor failed: {text}"
+          # llm tool-calling loop executes a model-requested tool via the shared
+          # run path and loops the result back (proved here with a stub
+          # endpoint; the ledger records the execution).
+          import threading, http.server, socketserver
+          calls = {"n": 0}
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                  calls["n"] += 1
+                  if calls["n"] == 1:
+                      body = {"choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "demo-skill__hello", "arguments": "{}"}}]}}]}
+                  else:
+                      body = {"choices": [{"message": {"role": "assistant", "content": "grounded answer"}}]}
+                  data = json.dumps(body).encode()
+                  self.send_response(200)
+                  self.send_header("content-type", "application/json")
+                  self.send_header("content-length", str(len(data)))
+                  self.end_headers()
+                  self.wfile.write(data)
+              def log_message(self, *a):
+                  pass
+          with socketserver.TCPServer(("127.0.0.1", 0), H) as srv:
+              port = srv.server_address[1]
+              t = threading.Thread(target=srv.serve_forever, daemon=True)
+              t.start()
+              text, code = mcp_server.run_tool("llm", {"request": "run the tool", "endpoint": f"http://127.0.0.1:{port}/v1/chat/completions", "model": "test", "max_tool_calls": 3})
+              srv.shutdown()
+          assert code == 0, f"python llm loop failed: {text}"
+          parsed = json.loads(text)
+          assert parsed["ok"] is True and parsed["response"] == "grounded answer", f"unexpected llm result: {parsed}"
+          assert parsed["tool_calls"][0]["name"] == "demo-skill__hello" and parsed["tool_calls"][0]["ok"] is True, f"tool call not executed: {parsed['tool_calls']}"
+          assert calls["n"] == 2, f"expected 2 LLM rounds, got {calls['n']}"
+          ledger = os.path.join(reg, "tool-runs.jsonl")
+          assert os.path.exists(ledger) and "demo-skill__hello" in open(ledger, encoding="utf-8").read(), "llm loop did not record the executed tool"
+          print("python twin parity gate ok")
+          PY
