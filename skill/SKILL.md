@@ -11,6 +11,8 @@ metadata:
 
 Adaptive layer over the installed skill ecosystem. Do not paste this package, the registry, or skill docs into chat. Load only what the current step needs.
 
+Work silently. Never echo planning steps, tool names, reasoning, or "now I will…" narration into chat. Show the result, not the process.
+
 ## Contract
 
 1. **Discover** — use the local registry (`parasite-skill scan`). Rescan only when missing, stale, or asked.
