@@ -46,6 +46,10 @@ COMMANDS
   mcp       MCP control: add|remove|list register/remove the parasite-skill MCP
             server in client configs (no manual config); bare mcp runs the server
   bundle    Build a tarball + install.json manifest for GitHub Pages distribution (--out, --meta)
+  site      Generate the static docs site (build | validate): multi-page HTML from
+            the project data (skills/tools/agents/clients/mcp/hooks + guides/reference/
+            configuration/architecture/changelog) with search, llms.txt + llms-full.txt,
+            sitemap/robots, route manifest, and link validation (--out DIR, --base URL)
   sync      Cloud-sync the skills tree to a git remote (--init URL | --push | --pull | --status; --dry-run previews push/pull)
   agents    Generate AGENTS.md (default), list/show the agent profiles, or
             run <profile>/--all with a request
@@ -363,6 +367,7 @@ export function parseFlags(argv) {
       case "--dot": flags.dot = true; break;
       case "--mmd": flags.mmd = true; break;
       case "--out": { const v = value(++i, a); if (v !== undefined) flags.out = v; break; }
+      case "--base": { const v = value(++i, a); if (v !== undefined) flags.base = v; break; }
       case "--meta": { const v = value(++i, a); if (v !== undefined) flags.meta = v; break; }
       case "--runtime": { const v = value(++i, a); if (v !== undefined) flags.runtime = v; break; }
       case "--clients": { const v = value(++i, a); if (v !== undefined) flags.clients = v.split(",").map((x) => x.trim()).filter(Boolean); break; }
@@ -514,6 +519,7 @@ export async function run(argv) {
     case "doctor": return commands.cmdDoctor(ctx);
     case "link": return commands.cmdLink(ctx);
     case "bundle": return commands.cmdBundle(ctx);
+    case "site": return await commands.cmdSite(ctx);
     case "sync": return commands.cmdSync(ctx);
     case "agents": {
       const sub = flags._[1];

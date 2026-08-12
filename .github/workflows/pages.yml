@@ -32,36 +32,21 @@ jobs:
           mkdir -p "$PARASITE_SKILL_HOME/.agents/skills"
           cp -R skill "$PARASITE_SKILL_HOME/.agents/skills/parasite-skill"
           node bin/parasite-skill.js scan --force --dirs "$PARASITE_SKILL_HOME/.agents/skills"
-      - name: Generate wiki and graph
+      - name: Generate the static docs site
         env:
           PARASITE_SKILL_HOME: ${{ runner.temp }}/parasite-skill-home
         run: |
           rm -rf public
-          mkdir -p public
-          node bin/parasite-skill.js wikis --public --force --dirs "$PARASITE_SKILL_HOME/.agents/skills"
-          REG="$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill"
-          cp -R "$REG/wikis" public/wiki
-          node bin/parasite-skill.js graph --ecosystem --json --public --force --dirs "$PARASITE_SKILL_HOME/.agents/skills" > public/ecosystem-graph.json
+          node bin/parasite-skill.js site build --out public \
+            --force --dirs "$PARASITE_SKILL_HOME/.agents/skills"
+      - name: Emit typed ecosystem graph artifact
+        env:
+          PARASITE_SKILL_HOME: ${{ runner.temp }}/parasite-skill-home
+        run: |
+          node bin/parasite-skill.js graph --ecosystem --json --public \
+            --force --dirs "$PARASITE_SKILL_HOME/.agents/skills" > public/ecosystem-graph.json
       - name: Build zero-npm bundle
         run: node bin/parasite-skill.js bundle --out "$PWD/public/parasite-skill-bundle.tar.gz" --meta "$PWD/public/install.json"
-      - name: Write Pages landing page
-        run: |
-          cat > public/index.html <<'HTML'
-          <!doctype html>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>parasite-skill</title>
-          <style>body{font:16px system-ui;max-width:760px;margin:4rem auto;padding:0 1rem;color:#172033}a{color:#2457c5}code{background:#eef2ff;padding:.15rem .3rem;border-radius:.25rem}</style>
-          <h1>parasite-skill</h1>
-          <p>Bounded routing and ecosystem tooling for installed AI skills.</p>
-          <ul>
-            <li><a href="wiki/Home.md">Wiki and agent profiles</a></li>
-            <li><a href="wiki/graph.json">Typed ecosystem graph</a></li>
-            <li><a href="install.json">Install manifest</a></li>
-            <li><a href="parasite-skill-bundle.tar.gz">Download skill bundle</a></li>
-          </ul>
-          <p><small>Generated from the repository by GitHub Actions. No personal data or chat history is published.</small></p>
-          HTML
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:

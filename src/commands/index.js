@@ -20,3 +20,4 @@ export { cmdTools } from "./tools.js";
 export { cmdAgentsRun } from "./agents-run.js";
 export { cmdAgentsList } from "./agents-list.js";
 export { cmdDoctor } from "./doctor.js";
+export { cmdSite } from "./site.js";

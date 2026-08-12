@@ -57,7 +57,7 @@ export function loadSetsWithProject(reg, projectSets) {
   return sets;
 }
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.3.0";
 export const REGISTRY_NAME = ".parasite-skill";
 export const HOME = homedir();
 

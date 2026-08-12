@@ -334,6 +334,7 @@ parasite-skill link [--unlink] | mcp add|remove|list | sync --push|--pull [--dry
 parasite-skill tools list|run|run-batch|verify|audit|docs|policy|history|ledger|gc
 parasite-skill agents list|show <profile> | agents run <profile> "<request>" [--dry-run] [--strict] [--json]
 parasite-skill llm "<request>" [--tool-dry-run] [--json]
+parasite-skill site build [--out public] | site validate
 ```
 
 - `tools` exposes skill scripts as callable AI tools (MCP: `skill_tools_list/run/audit`). Tools execute only on explicit invocation — never from routing alone. Policy gate: `parasite-skill.json` `tools` block (`allow`/`deny`/`env`/`timeoutMs`, `scoped` per `profile:`/`sets:`); skills can declare `tools:` frontmatter with `argsSchema`; `--json-args` validates before running (exit 3 on invalid).
@@ -342,6 +343,7 @@ parasite-skill llm "<request>" [--tool-dry-run] [--json]
 - `agents run` executes a profile workflow, writes a report; `--dry-run` previews, `--strict` fails on blocked tools, `--min-tools N` gates on success count.
 - `llm` does bounded native tool-calling against an external OpenAI-compatible endpoint (opt-in, HTTPS, `--allow-remote`), `--tool-dry-run` previews, `--json` returns a `tool_calls` trace.
 - `export` records the tool inventory, gc posture, and sync backup state; `--public` strips filesystem paths.
+- `site build` generates the static docs site (skills/tools/agents/clients/mcp/hooks + guides/reference/changelog + wiki), with search, `llms.txt`/`llms-full.txt`, sitemap/robots, route manifest, and link validation; `site validate` gates a build.
 
 ## Registry, Refs, Wikis, Links
 

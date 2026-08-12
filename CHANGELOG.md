@@ -5,6 +5,38 @@ All notable changes to parasite-skill are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project aims for [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-08-12
+
+### Added
+
+- **`site` command — static docs site generator.** `parasite-skill site build`
+  derives a full multi-page static site from the project's own data with zero
+  runtime dependencies (no framework). Every route is a physical directory
+  with an `index.html`, so deep nested links and refreshes work without
+  JavaScript:
+  - Landing, features (README), architecture (design.md + live source-tree
+    map), configuration (parasite-skill.example.json + option reference);
+  - `/skills/<id>/`, `/tools/<id>/`, `/agents/<id>/`, `/clients/<id>/`,
+    `/mcp/`, `/hooks/`, `/reference/commands/`, `/changelog/`, `/guides/`,
+    `/docs/`, and the rendered `/wiki/` — all public-safe (no filesystem
+    paths, no secrets, no user-specific inventory beyond names/metadata);
+  - LLM-readable output: `llms.txt` + `llms-full.txt` corpus, a markdown
+    twin (`index.md`) beside every page, and structured `data/index.json`;
+  - Client-side full-text search (`site-index.json` + zero-dep `search.js`),
+    `routes.json` route manifest, `sitemap.xml`, `robots.txt`, `404.html`;
+  - Breadcrumbs, hierarchical sidebar (active section expanded), prev/next
+    pager, and per-page source links back to the repo.
+- **`site validate`** — re-reads a build and asserts every internal link
+  resolves to an emitted file and that corpus/search/sitemap artifacts exist
+  and parse (exit 1 on problems).
+- **Context-aware `.md` link rewriting** — the renderer resolves relative
+  markdown links (wiki, references, docs) onto the generated `.html` routes.
+- **GitHub Pages workflow** now builds the whole site via the generator
+  instead of a hardcoded landing page; the ecosystem graph and zero-npm
+  bundle artifacts are still published alongside it.
+- Version surfaced consistently: engine `VERSION` was stale at 1.1.0 while
+  `package.json` said 1.2.0; both now report 1.3.0.
+
 ## [1.2.0] - 2026-08-12
 
 The tools release. parasite-skill grew a first-class tool layer: an
@@ -246,6 +278,7 @@ Initial release, as skill-router.
 - Cloud sync (`--sync --init/--push/--pull`), an AGENTS.md generator, and
   a relatedness graph (DOT + Mermaid) over skill keywords.
 
+[1.3.0]: https://github.com/Alot1z/parasite-skill/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Alot1z/parasite-skill/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Alot1z/parasite-skill/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Alot1z/parasite-skill/releases/tag/v1.0.0
