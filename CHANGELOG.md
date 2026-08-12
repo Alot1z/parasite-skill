@@ -167,13 +167,18 @@ most of it, and CI grew from a smoke test into a release gate.
 ### Changed
 
 - The test suite grew from 120 to 206 tests across this release.
-- `skill/SKILL.md` cut from 336 to 46 lines across two passes: the
+- `skill/SKILL.md` cut from 336 to 48 lines across two passes: the
   injected skill is now a compact dispatch doc (contract, 5 core
   commands, cadence, privacy boundary). Flag tables, sets, project
   config, the parasite layer, and the full command surface moved to
   `references/full-skill.md`, read on demand — installing or refreshing
   no longer pushes a long document into every chat session that invokes
   the skill.
+- Token budget for the always-on cadence: thinking skills load once per
+  phase and are applied, not re-injected, between tool calls (the
+  thinking skills are 120-396 lines each); re-load only on phase/source
+  change or `--force`; cadence summaries state the outcome, not which
+  skills were loaded.
 - CI is now a release gate: it writes the audit baseline first (approving
   the shipped subprocess-using scripts), then runs doctor, verify,
   baseline-diff, and `agents run --dry-run --strict` in an isolated
