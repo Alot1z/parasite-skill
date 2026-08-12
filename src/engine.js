@@ -620,15 +620,72 @@ export function loadRegistry(registry, extraDirs, force) {
   const f = join(registry, "registry.json");
   if (!force && existsSync(f)) {
     try {
-      return JSON.parse(readFileSync(f, "utf-8"));
+      const payload = JSON.parse(readFileSync(f, "utf-8"));
+      // Freshness: when a real skill on disk is newer than the registry, the
+      // cached payload is stale. Re-scan automatically so routing/planning
+      // reflect new or edited skills without a manual `scan --force`. The 2s
+      // epsilon guards against same-second writes on coarse-mtime filesystems;
+      // only directories with a SKILL.md count as signal.
+      const staleness = registryStale(registry, extraDirs);
+      if (!staleness.stale) return payload;
+      const fresh = scan(expandDirs(extraDirs));
+      writeFileSync(f, JSON.stringify(fresh, null, 2));
+      return fresh;
     } catch {
-      /* fall through */
+      /* fall through to a scan */
     }
   }
   const payload = scan(expandDirs(extraDirs));
   writeFileSync(f, JSON.stringify(payload, null, 2));
   return payload;
 }
+
+/**
+ * Registry freshness check: is the cached registry.json older than the skills
+ * it indexes? Returns { stale, reason, registryMs, newestSkillMs, newerSkills }.
+ * `stale` is true when the registry file is missing/unreadable, or when any
+ * configured scan dir holds a SKILL.md whose mtime is more than 2s newer than
+ * the registry. Never throws; a missing registry is stale with a clear reason.
+ */
+export function registryStale(registry, extraDirs) {
+  const EMPTY_SKILLS_MS = 0;
+  const registryFile = join(registry, "registry.json");
+  let registryMs = null;
+  try {
+    registryMs = statSync(registryFile).mtimeMs;
+  } catch {
+    return { stale: true, reason: "no registry.json yet", registryMs: null, newestSkillMs: null, newerSkills: [] };
+  }
+  const newerSkills = [];
+  let newestSkillMs = EMPTY_SKILLS_MS;
+  const EPSILON_MS = 2000; // coarse-mtime filesystems (FAT/NTFS timestamp granularity)
+  for (const dir of expandDirs(extraDirs)) {
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith(".")) continue;
+      const skillDir = join(dir, entry.name);
+      const md = join(skillDir, "SKILL.md");
+      try {
+        const mtimeMs = statSync(md).mtimeMs;
+        newestSkillMs = Math.max(newestSkillMs, mtimeMs);
+        if (mtimeMs - registryMs > EPSILON_MS) newerSkills.push(entry.name);
+      } catch {
+        /* not a skill (no SKILL.md) — no freshness signal */
+      }
+    }
+  }
+  if (newerSkills.length) {
+    return { stale: true, reason: `${newerSkills.length} skill(s) newer than the registry: ${newerSkills.slice(0, 5).join(", ")}${newerSkills.length > 5 ? "…" : ""}`, registryMs, newestSkillMs, newerSkills };
+  }
+  return { stale: false, reason: "registry is current", registryMs, newestSkillMs, newerSkills };
+}
+
 
 // ---------------------------------------------------------------- scoring
 

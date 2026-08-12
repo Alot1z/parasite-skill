@@ -37,6 +37,7 @@ from conductor import (  # noqa: E402
     project_sets,
     runtime_sets,
     project_gc,
+    _registry_stale,
 )
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -132,7 +133,8 @@ TOOLS = [
     {"name": "skill_tools_run", "description": "Explicitly execute one skill AI-tool. Bounded, captured, and redacted; never runs automatically.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "args": {"type": "string"}, "timeout_ms": {"type": "number"}, "allow": {"type": "array", "items": {"type": "string"}}, "deny": {"type": "array", "items": {"type": "string"}}, "env": {"type": "array", "items": {"type": "string"}}}, "required": ["name"]}},
     {"name": "skill_tools_history", "description": "Read the tool-run audit ledger (tool-runs.jsonl) with filters: name/skill globs, status (ok|fail), since/until ISO timestamps, limit. Parity with the JS twin's `tools history`.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "skill": {"type": "string"}, "status": {"type": "string"}, "since": {"type": "string"}, "until": {"type": "string"}, "limit": {"type": "number"}}}},
     {"name": "skill_tools_gc", "description": "Prune stale registry artifacts (agent reports + audit ledger) by age/keep, or report the gc posture. Parity with the JS twin's `tools gc` / `tools gc --status`.", "inputSchema": {"type": "object", "properties": {"status": {"type": "boolean", "description": "report policy + last/next sweep posture + stale dry-run without pruning"}, "age_days": {"type": "number"}, "keep": {"type": "number"}, "dry_run": {"type": "boolean"}}}},
-    {"name": "doctor", "description": "One-shot health check: registry loads, spec validation, callable-tool count. Exits 1 on the first failing check.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "skill_tools_ledger", "description": "Audit-ledger lifecycle (tool-runs.jsonl): stats reports integrity + aggregates (valid/corrupt/out-of-order, ok/fail, by-skill/by-tool), export dumps the full ledger as a JSON array to a file, purge clears it. Parity with the JS twin's `tools ledger`.", "inputSchema": {"type": "object", "properties": {"stats": {"type": "boolean", "description": "integrity + aggregate stats (exits nonzero when corrupt lines exist)"}, "export": {"type": "string", "description": "dump the full ledger as a JSON array to this path"}, "purge": {"type": "boolean", "description": "clear the ledger entirely"}}}},
+    {"name": "doctor", "description": "One-shot health check: registry loads, spec validation, callable-tool count, ledger integrity, freshness. Exits 1 on the first failing check.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "export", "description": "Python-twin ecosystem inventory (skills, sets, tools with risk, gc posture, ledger stats) from the shared registry. JS-only client/extension/MCP state is served by the JS twin. --public strips paths.", "inputSchema": {"type": "object", "properties": {"public": {"type": "boolean"}}}},
     {"name": "llm", "description": "Bounded OpenAI-compatible completions with native tool calling: skill tools are exposed as functions with risk annotations, model-requested calls are executed via the shared run path, and results are fed back to the model (capped at max_tool_calls rounds). tool_dry_run previews commands without executing. Local-only by default; allow_remote permits HTTPS.", "inputSchema": {"type": "object", "properties": {"request": {"type": "string"}, "endpoint": {"type": "string"}, "model": {"type": "string"}, "allow_remote": {"type": "boolean"}, "max_output_tokens": {"type": "number"}, "max_response_chars": {"type": "number"}, "no_tools": {"type": "boolean"}, "tool_dry_run": {"type": "boolean"}, "max_tool_calls": {"type": "number"}, "top": {"type": "number"}, "max_chars": {"type": "number"}}, "required": ["request"]}},
 ]
@@ -448,6 +450,83 @@ def _run_tool_once(reg: Path, extra, name: str, tool_args: str = "", timeout_ms=
     except OSError:
         pass
     return result
+
+
+def _ledger_check(reg: Path) -> dict:
+    """Integrity + size check of the audit ledger (tool-runs.jsonl). Mirrors the
+    JS ledgerCheck: { exists, total, valid, corrupt, out_of_order, first_ts,
+    last_ts, bytes }. Never raises; a missing ledger reports exists: False."""
+    empty = {"exists": False, "total": 0, "valid": 0, "corrupt": 0, "out_of_order": 0, "first_ts": None, "last_ts": None, "bytes": 0}
+    ledger_path = reg / "tool-runs.jsonl"
+    try:
+        if not ledger_path.exists():
+            return empty
+        raw = [ln for ln in ledger_path.read_text(encoding="utf-8", errors="replace").split("\n") if ln]
+        stat = ledger_path.stat()
+    except OSError:
+        return empty
+    valid = 0
+    corrupt = 0
+    out_of_order = 0
+    prev_ts = None
+    first_ts = None
+    last_ts = None
+    for line in raw:
+        ts = None
+        try:
+            entry = json.loads(line)
+            raw_ts = entry.get("ts")
+            if isinstance(raw_ts, str) and raw_ts:
+                ts = int(datetime.fromisoformat(raw_ts.replace("Z", "+00:00")).timestamp() * 1000)
+            elif isinstance(raw_ts, (int, float)):
+                ts = int(raw_ts)
+        except Exception:  # noqa: BLE001
+            corrupt += 1
+            continue
+        if ts is None:
+            corrupt += 1
+            continue
+        valid += 1
+        if first_ts is None:
+            first_ts = ts
+        last_ts = ts
+        if prev_ts is not None and ts < prev_ts:
+            out_of_order += 1
+        prev_ts = ts
+    return {"exists": True, "total": len(raw), "valid": valid, "corrupt": corrupt, "out_of_order": out_of_order, "first_ts": first_ts, "last_ts": last_ts, "bytes": stat.st_size}
+
+
+def _ledger_stats(reg: Path) -> dict:
+    """Aggregate stats over the whole ledger (JS ledgerStats parity): totals,
+    integrity, ok/fail, average duration, and per-skill/per-tool counts."""
+    check = _ledger_check(reg)
+    stats = {**check, "ok": 0, "fail": 0, "avg_duration_ms": None, "by_skill": {}, "by_tool": {}}
+    if not check["exists"]:
+        return stats
+    try:
+        raw = [ln for ln in (reg / "tool-runs.jsonl").read_text(encoding="utf-8", errors="replace").split("\n") if ln]
+    except OSError:
+        return stats
+    durations = []
+    for line in raw:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("status") == 0:
+            stats["ok"] += 1
+        else:
+            stats["fail"] += 1
+        skill = str(entry.get("skill") or "?")
+        name = str(entry.get("name") or "?")
+        stats["by_skill"][skill] = stats["by_skill"].get(skill, 0) + 1
+        stats["by_tool"][name] = stats["by_tool"].get(name, 0) + 1
+        dur = entry.get("duration_ms")
+        if isinstance(dur, (int, float)):
+            durations.append(float(dur))
+    if durations:
+        stats["avg_duration_ms"] = int(sum(durations) / len(durations))
+    return stats
 
 
 def _gc_posture(reg: Path, policy: dict | None) -> dict:
@@ -881,6 +960,55 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         print(json.dumps({"removed": applied["removed"], "totals": applied["totals"], "dry_run": dry_run}, indent=2))
         return 0
 
+    def do_skill_tools_ledger():
+        # Audit-ledger lifecycle (JS `tools ledger` parity): --stats reports
+        # integrity + aggregates, --export dumps the ledger as a JSON array,
+        # --purge clears it. At most one mode per call.
+        want_stats = bool(params.get("stats"))
+        export_to = params.get("export")
+        want_purge = bool(params.get("purge"))
+        modes = sum([want_stats, export_to is not None, want_purge])
+        if modes > 1:
+            print(json.dumps({"ok": False, "error": "skill_tools_ledger accepts one mode: stats, export, or purge"}, indent=2))
+            return 1
+        if want_stats:
+            stats = _ledger_stats(reg)
+            print(json.dumps(stats, indent=2))
+            return 2 if stats["corrupt"] else 0
+        if export_to is not None:
+            out = Path(str(export_to))
+            if not out.is_absolute():
+                out = Path.cwd() / out
+            try:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                entries = []
+                ledger_path = reg / "tool-runs.jsonl"
+                if ledger_path.exists():
+                    for line in ledger_path.read_text(encoding="utf-8", errors="replace").split("\n"):
+                        if line:
+                            try:
+                                entries.append(json.loads(line))
+                            except ValueError:
+                                continue
+                out.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+            except OSError as err:
+                print(json.dumps({"ok": False, "error": f"ledger export failed: {err}"}, indent=2))
+                return 1
+            print(json.dumps({"ok": True, "path": str(out), "exported": len(entries)}, indent=2))
+            return 0
+        if want_purge:
+            before = _ledger_stats(reg)
+            ledger_path = reg / "tool-runs.jsonl"
+            try:
+                ledger_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            print(json.dumps({"ok": True, "purged": before["total"] if before["exists"] else 0}, indent=2))
+            return 0
+        stats = _ledger_stats(reg)
+        print(json.dumps(stats, indent=2))
+        return 0
+
     def do_skill_tools_run():
         name = str(params.get("name", ""))
         tool_args = str(params.get("args") or "")
@@ -979,6 +1107,27 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         else:
             ok("gc", "no gc TTL policy configured (parasite-skill.json \"gc\": { \"ageDays\": N, \"keep\": N })")
 
+        # 5. Registry freshness: skills newer than registry.json mean the
+        # cached payload is stale. Informational only (load_registry re-scans
+        # automatically on a stale cache), so it never fails CI.
+        staleness = _registry_stale(reg, extra)
+        if staleness["stale"]:
+            ok("freshness", f"{staleness['reason']} — run scan to refresh the cache")
+        else:
+            ok("freshness", staleness["reason"])
+
+        # 6. Audit ledger integrity: a corrupt tool-runs.jsonl means the append
+        # path broke (or the file was hand-edited) — a failing check so CI
+        # catches it. Out-of-order timestamps are informational.
+        ledger = _ledger_check(reg)
+        if not ledger["exists"]:
+            ok("ledger", "no audit ledger yet (tool-runs.jsonl absent)")
+        elif ledger["corrupt"]:
+            fail("ledger", f"{ledger['corrupt']}/{ledger['total']} corrupt line(s) in tool-runs.jsonl — inspect with skill_tools_history, repair, or skill_tools_ledger purge")
+        else:
+            extra_note = f", {ledger['out_of_order']} out-of-order timestamp(s)" if ledger["out_of_order"] else ""
+            ok("ledger", f"{ledger['total']} entries ({ledger['bytes']} bytes){extra_note}")
+
         print(json.dumps({"ok": failed == 0, "failed": failed, "checks": out}, indent=2))
         return 0 if failed == 0 else 1
 
@@ -998,6 +1147,7 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         "skill_tools_docs": do_skill_tools_docs,
         "skill_tools_history": do_skill_tools_history,
         "skill_tools_gc": do_skill_tools_gc,
+        "skill_tools_ledger": do_skill_tools_ledger,
         "skill_tools_run": do_skill_tools_run,
         "doctor": do_doctor,
         "export": do_export,

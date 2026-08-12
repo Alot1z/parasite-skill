@@ -2,7 +2,7 @@
 // tools that the host LLM (or a CLI/MCP caller) can invoke. Execution is always
 // explicit, time-bounded, captured, and redacted — never automatic, never
 // triggered by merely routing a request, and never on imported chat content.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { VERSION } from "./engine.js";
@@ -427,6 +427,103 @@ export function clearToolRuns(regDir) {
   } catch {
     /* best-effort */
   }
+}
+
+/**
+ * Integrity + size check of the audit ledger (tool-runs.jsonl). Returns
+ * { exists, total, valid, corrupt, out_of_order, first_ts, last_ts, bytes }.
+ * `corrupt` counts lines that fail to parse; `out_of_order` counts entries
+ * whose timestamp precedes the previous valid entry (append-order drift, e.g.
+ * a clock jump or a hand-edited ledger). Never throws: a missing or unreadable
+ * ledger reports exists: false / zeroed counts.
+ */
+export function ledgerCheck(regDir) {
+  const empty = { exists: false, total: 0, valid: 0, corrupt: 0, out_of_order: 0, first_ts: null, last_ts: null, bytes: 0 };
+  if (!regDir) return empty;
+  const file = join(regDir, LEDGER_FILE);
+  try {
+    if (!existsSync(file)) return empty;
+    const stat = statSync(file);
+    const rawLines = readFileSync(file, "utf-8").split("\n").filter(Boolean);
+    let valid = 0;
+    let corrupt = 0;
+    let outOfOrder = 0;
+    let prevTs = null;
+    let firstTs = null;
+    let lastTs = null;
+    for (const line of rawLines) {
+      let ts = null;
+      try {
+        const entry = JSON.parse(line);
+        ts = typeof entry.ts === "string" && entry.ts ? Date.parse(entry.ts) : null;
+        if (!Number.isFinite(ts)) ts = null;
+      } catch {
+        /* corrupt line */
+      }
+      if (ts === null) {
+        corrupt++;
+        continue;
+      }
+      valid++;
+      if (firstTs === null) firstTs = ts;
+      lastTs = ts;
+      if (prevTs !== null && ts < prevTs) outOfOrder++;
+      prevTs = ts;
+    }
+    return {
+      exists: true,
+      total: rawLines.length,
+      valid,
+      corrupt,
+      out_of_order: outOfOrder,
+      first_ts: firstTs,
+      last_ts: lastTs,
+      bytes: stat.size,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/**
+ * Aggregate stats over the whole ledger: totals, integrity, ok/fail counts,
+ * average duration, and per-skill/per-tool run counts. Shared by the `tools
+ * ledger --stats` command and the Python twin's skill_tools_ledger tool.
+ */
+export function ledgerStats(regDir) {
+  const check = ledgerCheck(regDir);
+  const stats = {
+    ...check,
+    ok: 0,
+    fail: 0,
+    avg_duration_ms: null,
+    by_skill: {},
+    by_tool: {},
+  };
+  if (!check.exists) return stats;
+  try {
+    const lines = readFileSync(join(regDir, LEDGER_FILE), "utf-8").split("\n").filter(Boolean);
+    const durations = [];
+    for (const line of lines) {
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry.status === 0) stats.ok++;
+      else stats.fail++;
+      const skill = entry.skill ?? "?";
+      const name = entry.name ?? "?";
+      stats.by_skill[skill] = (stats.by_skill[skill] ?? 0) + 1;
+      stats.by_tool[name] = (stats.by_tool[name] ?? 0) + 1;
+      if (Number.isFinite(entry.duration_ms)) durations.push(entry.duration_ms);
+    }
+    if (durations.length) stats.avg_duration_ms = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
+  } catch {
+    /* stats are best-effort over whatever is readable */
+  }
+  return stats;
 }
 
 // ---------------------------------------------------------------- TOOLS.md render

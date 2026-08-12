@@ -11,6 +11,8 @@
 //  tools policy                     read or edit the project tools policy in
 //                                   parasite-skill.json (allow/deny/env/timeoutMs/scoped)
 //  tools history [--name/--skill/--status]  audit ledger, filterable
+//  tools ledger [--stats|--export FILE|--purge]  ledger lifecycle: integrity
+//                                   stats, full JSON export, or clear
 //  tools gc [--age N] [--keep N]    prune stale registry artifacts (agent
 //                                   reports/dry-runs, oversized ledger);
 //                                   --dry-run previews without deleting
@@ -19,7 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { loadProjectConfig, loadRegistry, registryDir } from "../engine.js";
-import { auditSkillTools, clearToolRuns, filterToolsByPolicy, listSkillTools, readToolRuns, renderToolsDocs, resolveToolRun, runSkillTool } from "../ai-tools.js";
+import { auditSkillTools, clearToolRuns, filterToolsByPolicy, ledgerStats, listSkillTools, readToolRuns, renderToolsDocs, resolveToolRun, runSkillTool } from "../ai-tools.js";
 import { fmt } from "./_lib.js";
 
 function parseKeyValues(raw) {
@@ -510,8 +512,71 @@ export function cmdTools(args = {}) {
     return 0;
   }
 
+  if (sub === "ledger") {
+    // Ledger lifecycle: --stats reports integrity + aggregates, --export FILE
+    // dumps the full ledger as a JSON array, --purge clears it. At most one
+    // mode per invocation; nothing mutates unless --purge is given.
+    const modes = [args.ledgerStats === true, args.ledgerExport !== undefined, args.ledgerPurge === true].filter(Boolean).length;
+    if (modes > 1) {
+      console.error("tools ledger accepts one mode: --stats, --export FILE, or --purge");
+      return 1;
+    }
+    if (args.ledgerStats === true) {
+      const stats = ledgerStats(reg);
+      if (args.json) {
+        console.log(JSON.stringify(stats, null, 2));
+      } else if (!stats.exists) {
+        console.log("audit ledger: not present yet (run a tool to start recording)");
+      } else {
+        console.log("audit ledger (tool-runs.jsonl):");
+        console.log(`  entries: ${stats.total} (${stats.valid} valid, ${stats.corrupt} corrupt, ${stats.out_of_order} out-of-order)`);
+        console.log(`  size: ${stats.bytes} bytes`);
+        console.log(`  span: ${stats.first_ts ? new Date(stats.first_ts).toISOString() : "-"} -> ${stats.last_ts ? new Date(stats.last_ts).toISOString() : "-"}`);
+        console.log(`  outcomes: ${stats.ok} ok / ${stats.fail} fail${stats.avg_duration_ms !== null ? ` · avg ${stats.avg_duration_ms}ms` : ""}`);
+        const topSkills = Object.entries(stats.by_skill).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        const topTools = Object.entries(stats.by_tool).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        if (topSkills.length) console.log(`  top skills: ${topSkills.map(([k, v]) => `${k} (${v})`).join(", ")}`);
+        if (topTools.length) console.log(`  top tools: ${topTools.map(([k, v]) => `${k} (${v})`).join(", ")}`);
+        if (stats.corrupt) console.log("  integrity: FAIL — corrupt line(s) detected; inspect with tools history, or tools ledger --purge");
+        else if (stats.out_of_order) console.log("  integrity: warn — out-of-order timestamps (clock jump or hand edit)");
+        else console.log("  integrity: ok");
+      }
+      return stats.corrupt ? 2 : 0;
+    }
+    if (args.ledgerExport !== undefined) {
+      // Absolute paths are used as-is; relative paths resolve from cwd.
+      // (path.join would mangle a Windows drive-letter path on the left side.)
+      const out = isAbsolute(args.ledgerExport) ? args.ledgerExport : join(process.cwd(), args.ledgerExport);
+      const entries = readToolRuns(reg, 5000);
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, JSON.stringify(entries, null, 2) + "\n", "utf-8");
+      console.log(`ledger exported -> ${fmt(out)} (${entries.length} entries)`);
+      return 0;
+    }
+    if (args.ledgerPurge === true) {
+      const before = ledgerStats(reg);
+      clearToolRuns(reg);
+      console.log(`tool run ledger purged (${before.exists ? before.total : 0} entries removed)`);
+      return 0;
+    }
+    // No mode: print the summary stats like --stats but never fail on corrupt
+    // lines — an inspection call should not exit nonzero.
+    const stats = ledgerStats(reg);
+    if (args.json) {
+      console.log(JSON.stringify(stats, null, 2));
+    } else if (!stats.exists) {
+      console.log("audit ledger: not present yet (run a tool to start recording)");
+    } else {
+      console.log(`audit ledger: ${stats.total} entries (${stats.valid} valid, ${stats.corrupt} corrupt, ${stats.out_of_order} out-of-order), ${stats.ok} ok / ${stats.fail} fail, ${stats.bytes} bytes`);
+      console.log("modes: --stats (detailed) · --export FILE · --purge");
+    }
+    return 0;
+  }
+
   if (sub === "docs") {
-    const out = args.out ? join(process.cwd(), args.out) : join(reg, "TOOLS.md");
+    // Absolute --out paths are used as-is (path.join would mangle a Windows
+    // drive-letter path on the left side); relative paths resolve from cwd.
+    const out = args.out ? (isAbsolute(args.out) ? args.out : join(process.cwd(), args.out)) : join(reg, "TOOLS.md");
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, renderToolsDocs(payload, policy), "utf-8");
     console.log(`TOOLS.md generated -> ${out}`);
@@ -748,6 +813,6 @@ export function cmdTools(args = {}) {
     }
   }
 
-  console.error("tools action must be list, describe, run, run-batch, dry-run, audit, verify, docs, policy, history, or gc");
+  console.error("tools action must be list, describe, run, run-batch, dry-run, audit, verify, docs, policy, history, ledger, or gc");
   return 1;
 }

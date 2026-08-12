@@ -66,6 +66,7 @@ parasite-skill tools verify                       # readiness: scripts/policy/sc
 parasite-skill tools docs                         # generate registry/TOOLS.md
 parasite-skill tools policy --allow "a__*" --deny "b__*" [--dry-run]
 parasite-skill tools history [--clear] [--name G] [--skill G] [--status ok|fail] [--since ISO] [--until ISO]
+parasite-skill tools ledger [--stats|--export FILE|--purge]  # integrity/aggregates, dump, clear
 parasite-skill tools gc [--age N] [--keep N] [--dry-run]  # prune stale reports/ledger
 parasite-skill export [--public]                   # strip filesystem paths
 parasite-skill export --json                       # print the LLM-ready inventory
@@ -96,7 +97,11 @@ executing and writes `agents/<profile>-<request>.dryrun.md` + `.json` preview
 reports; `--strict` turns any policy-blocked tool into a hard failure
 (exit 2); `--min-tools N` gates on success count, `--all --profiles a,b`
 runs a subset, and `--json` prints the report to stdout for scripts/CI.
-`tools history --since/--until` filters the ledger by time window. `tools gc`
+`tools history --since/--until` filters the ledger by time window. `tools
+ledger` is the lifecycle command: `--stats` reports integrity (corrupt /
+out-of-order lines) plus ok/fail and per-skill/per-tool aggregates (exit 2 on
+corrupt — scripts can gate on a broken append path), `--export FILE` dumps
+the whole ledger as a JSON array, `--purge` clears it. `tools gc`
 prunes stale agent reports and ledger entries by age (`--age N` days) or count
 (`--keep N` newest), with `--dry-run` previewing deletions; a project `gc` TTL
 policy (`parasite-skill.json` `"gc": { "ageDays", "keep", "auto", "intervalDays" }`)
@@ -114,8 +119,10 @@ uses, and `skill_tools_history` reads it with the same filters as
 `tools history`, so `trace` and gc ledger pruning work in python-only
 environments too. `doctor` runs the same gates as CI in one
 command: spec validation,
-tool readiness, audit baseline, project-config parse, and an MCP registration
-check — and is also exposed to MCP hosts as a `doctor` tool in both twins. The
+tool readiness, audit baseline, project-config parse, an MCP registration
+check, audit-ledger integrity (corrupt `tool-runs.jsonl` is a failing check),
+and registry freshness (informational) — and is also exposed to MCP hosts as
+a `doctor` tool in both twins. The
 Python twin also exposes `skill_tools_gc` (the `tools gc` surface: posture via
 `status`, prune by `age_days`/`keep`, `dry_run` previews) and its `llm` tool
 runs the same native tool-calling loop as the JS twin — executing

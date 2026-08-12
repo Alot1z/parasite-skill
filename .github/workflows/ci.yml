@@ -110,6 +110,52 @@ jobs:
           echo "$out" | grep -q "auto-gc: skipped"
           test -f .agents/skills/.parasite-skill/agents/stale-report.json
           node "$GITHUB_WORKSPACE/bin/parasite-skill.js" doctor --json >/dev/null
+      - name: Ledger lifecycle + freshness gate (tools ledger + doctor + auto-refresh)
+        shell: bash
+        env:
+          PARASITE_SKILL_HOME: "${{ runner.temp }}/ps-ledger-home"
+        run: |
+          set -euo pipefail
+          mkdir -p "$PARASITE_SKILL_HOME/.agents/skills/demo-skill/scripts" \
+                   "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill"
+          printf '%s\n' '---' 'name: demo-skill' 'description: Debug failing tests.' '---' \
+            > "$PARASITE_SKILL_HOME/.agents/skills/demo-skill/SKILL.md"
+          printf '%s\n' 'print("hi")' > "$PARASITE_SKILL_HOME/.agents/skills/demo-skill/scripts/hello.py"
+          # Seed the registry AFTER the skill so it is fresh.
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" scan >/dev/null
+          # A real explicit run records one ledger entry.
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools run demo-skill__hello >/dev/null
+          # tools ledger --stats: integrity ok (exit 0), JSON carries corrupt: 0.
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools ledger --stats | grep -q '1 valid'
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools ledger --stats --json | grep -q '"corrupt": 0'
+          # tools ledger --export dumps the full ledger as a JSON array.
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools ledger --export /tmp/ledger-dump.json
+          grep -q 'demo-skill__hello' /tmp/ledger-dump.json
+          # tools ledger --purge clears; stats then report zero entries.
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools ledger --purge
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools ledger --stats --json | grep -q '"total": 0'
+          # Doctor integrity: a corrupt ledger is a failing check; repaired, green.
+          echo 'not-json' >> "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill/tool-runs.jsonl"
+          if node "$GITHUB_WORKSPACE/bin/parasite-skill.js" doctor --json >/dev/null 2>&1; then
+            echo "doctor unexpectedly passed with a corrupt ledger"
+            exit 1
+          fi
+          rm "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill/tool-runs.jsonl"
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" doctor --json >/dev/null
+          # Freshness: a skill edited after the scan makes the registry stale;
+          # route auto-refreshes (note on stderr) and routes the new skill.
+          # The mtime is pushed 5s into the future so the staleness detector's
+          # 2s coarse-mtime epsilon deterministically flags it.
+          mkdir -p "$PARASITE_SKILL_HOME/.agents/skills/fresh-skill"
+          printf '%s\n' '---' 'name: fresh-skill' 'description: Newly added skill.' '---' \
+            > "$PARASITE_SKILL_HOME/.agents/skills/fresh-skill/SKILL.md"
+          touch -d "+5 seconds" "$PARASITE_SKILL_HOME/.agents/skills/fresh-skill/SKILL.md"
+          out="$(node "$GITHUB_WORKSPACE/bin/parasite-skill.js" route 'fresh skill' 2>&1 >/dev/null || true)"
+          echo "$out" | grep -q 'registry was stale'
+          # Route on a keyword from the new skill's description (hyphenated
+          # names tokenize as one token, so a two-word idea would not match).
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" route 'added' --json | grep -q 'fresh-skill'
+          echo "ledger lifecycle + freshness gate ok"
       - name: Python-twin parity gate (export gc posture + gc tool + doctor)
         shell: bash
         env:

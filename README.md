@@ -39,11 +39,22 @@ parasite-skill compose "debug the failing MCP request" --json
 Run a one-shot health check with `parasite-skill doctor`: it validates every
 skill against the spec, verifies tool readiness (scripts exist, policy, schema
 shape), diffs the static audit against the persisted baseline (falling back to
-a high-risk gate when none exists), and parses the project config — exiting 1
-on the first failing check. `--json` gives the machine-readable view. This is
-the same surface the CI workflow gates on.
+a high-risk gate when none exists), parses the project config, checks the
+audit-ledger integrity (a corrupt `tool-runs.jsonl` is a failing check — the
+append path broke or the file was hand-edited), and reports registry
+freshness (skills newer than the cached `registry.json`; informational, since
+loading re-scans automatically) — exiting 1 on the first failing check.
+`--json` gives the machine-readable view. This is the same surface the CI
+workflow gates on.
 
 Routing is deterministic and inspectable: token and body-keyword matches, request mode, tags, explicit skill names, project set filters, and exclusions contribute to the result. The model still makes the semantic decision; scores are candidates, not proof.
+
+Routing reads a cached `registry.json` for speed, but the cache stays honest:
+when any skill on disk is newer than it, `loadRegistry` re-scans automatically
+(`route` prints a one-line stderr note) so new and edited skills show up in
+routing/planning without a manual `scan --force`. The Python twin's
+`load_registry` does the same. Both `doctor` implementations report this
+freshness state as an informational check.
 
 Project defaults live in `parasite-skill.json` or `.parasite-skill.json` and can define registry/scan paths, sets, enabled sets, exclusions, output limits, client allowlists, isolated environment keys, and the parasite toggle. `PARASITE_SKILL_HOME` isolates the complete runtime for tests or sandboxes.
 
@@ -91,6 +102,9 @@ parasite-skill tools history                        # audit ledger of executed t
 parasite-skill tools history --name "demo*" --status fail   # filter the ledger
 parasite-skill tools history --since 2026-01-01T00:00:00Z --until 2026-02-01T00:00:00Z
 parasite-skill tools history --clear                # reset the ledger
+parasite-skill tools ledger --stats                 # integrity + aggregates (exit 2 on corrupt)
+parasite-skill tools ledger --export dump.json      # full ledger as a JSON array
+parasite-skill tools ledger --purge                 # clear the ledger entirely
 parasite-skill tools gc --age 30 --dry-run          # preview pruning stale artifacts
 parasite-skill tools gc --keep 20                   # keep only the newest 20 reports/entries
 parasite-skill tools gc --status --json             # policy + auto-sweep throttle posture
@@ -121,11 +135,17 @@ the expected per-tool risk, and `tools audit --baseline` diffs against it,
 exiting 1 when any tool regressed to a higher risk level. `tools history`
 filters the ledger by tool-name glob (`--name`), skill glob (`--skill`),
 status (`--status ok|fail`), or a time window (`--since`/`--until` ISO
-timestamps) — "what ran in the last hour?" is one command. `tools gc` prunes
-stale registry artifacts (agent report/dry-run files by mtime, ledger entries
-by timestamp) with `--age N` days and/or `--keep N` newest — `--dry-run`
-previews exactly what would be deleted, nothing is removed until you drop the
-flag.
+timestamps) — "what ran in the last hour?" is one command. `tools ledger` is
+the ledger lifecycle command: `--stats` reports integrity (valid/corrupt/
+out-of-order lines), aggregate outcomes (ok/fail, average duration), and
+per-skill/per-tool counts — exiting 2 when corrupt lines exist so scripts can
+gate on a broken append path; `--export FILE` dumps the whole ledger as a JSON
+array (absolute or cwd-relative); `--purge` clears it. The Python twin
+mirrors this as the `skill_tools_ledger` MCP tool (stats/export/purge).
+`tools gc` prunes stale registry artifacts (agent report/dry-run files by
+mtime, ledger entries by timestamp) with `--age N` days and/or `--keep N`
+newest — `--dry-run` previews exactly what would be deleted, nothing is
+removed until you drop the flag.
 
 Skills can declare per-tool metadata in their `SKILL.md` frontmatter as a
 `tools:` JSON block keyed by tool name or asset path — overriding the
@@ -395,13 +415,15 @@ status, and duration — so scripted callers can audit model behavior without
 parsing the chat response.
 
 MCP hosts get the same health check as the CLI: both twins now expose a
-`doctor` tool (registry load, spec validation, tool readiness, and — in the
-JavaScript twin — the audit-baseline diff, project-config parse, and an MCP
-registration check that fails on unreadable client config files). The Python
-twin also gains `skill_tools_gc` (`tools gc` parity: posture with `status`,
-prune by `age_days`/`keep`, `dry_run` previews) and its `export` reports the
-gc posture (`last_sweep_ms`/`next_sweep_ms`/`stale`) plus audit-ledger stats
-(a superset of the JS export, which carries the same gc posture).
+`doctor` tool (registry load, spec validation, tool readiness, ledger
+integrity, and freshness — plus, in the JavaScript twin, the audit-baseline
+diff, project-config parse, and an MCP registration check that fails on
+unreadable client config files). The Python twin also gains `skill_tools_gc`
+(`tools gc` parity: posture with `status`, prune by `age_days`/`keep`,
+`dry_run` previews) and `skill_tools_ledger` (`tools ledger` parity:
+stats/export/purge), and its `export` reports the gc posture
+(`last_sweep_ms`/`next_sweep_ms`/`stale`) plus audit-ledger stats (a superset
+of the JS export, which carries the same gc posture).
 
 ## GitHub Pages distribution
 

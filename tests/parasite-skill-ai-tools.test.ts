@@ -4,9 +4,9 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scan, composePayload, mergeConfig } from "../src/engine.js";
+import { scan, composePayload, mergeConfig, loadRegistry, registryStale } from "../src/engine.js";
 import { planGc } from "../src/commands/tools.js";
-import { auditSkillTools, filterToolsByPolicy, listSkillTools, policyFor, readToolRuns, resolveToolRun, runSkillTool, validateToolArgs } from "../src/ai-tools.js";
+import { auditSkillTools, filterToolsByPolicy, ledgerCheck, ledgerStats, listSkillTools, policyFor, readToolRuns, resolveToolRun, runSkillTool, validateToolArgs } from "../src/ai-tools.js";
 import { cmdTools } from "../src/commands/tools.js";
 import { cmdScan } from "../src/commands/scan.js";
 import { cmdAgentsRun } from "../src/commands/agents-run.js";
@@ -613,6 +613,89 @@ describe("Python MCP twin parity", () => {
     ].join("; ");
     execFileSync(PY, ["-c", applyCode], { cwd: base, encoding: "utf8" });
     expect(existsSync(stale)).toBe(false);
+  });
+
+  test("python skill_tools_ledger matches the JS ledger surface", () => {
+    const base = join(tmpdir(), `sr-py-ledger-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    mkdirSync(regDir, { recursive: true });
+    const scriptsDir = join(process.cwd(), "skill", "scripts");
+    writeFileSync(
+      join(regDir, "tool-runs.jsonl"),
+      [
+        JSON.stringify({ ts: "2024-01-01T00:00:00.000Z", name: "demo-skill__hello", skill: "demo-skill", status: 0, duration_ms: 10, args: "", stdout_chars: 2, stderr_chars: 0 }),
+        JSON.stringify({ ts: "2024-01-02T00:00:00.000Z", name: "demo-skill__hello", skill: "demo-skill", status: 1, duration_ms: 30, args: "", stdout_chars: 0, stderr_chars: 1 }),
+        "not-json",
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    // stats: aggregate + integrity, exit 2 with corrupt lines (JS parity).
+    const statsCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_ledger', {'stats': True})",
+      "print(json.dumps({'text': json.loads(text), 'code': code}))",
+    ].join("; ");
+    const stats = JSON.parse(execFileSync(PY, ["-c", statsCode], { encoding: "utf8" }).trim());
+    expect(stats.code).toBe(2);
+    expect(stats.text.total).toBe(3);
+    expect(stats.text.corrupt).toBe(1);
+    expect(stats.text.ok).toBe(1);
+    expect(stats.text.fail).toBe(1);
+    expect(stats.text.by_skill).toEqual({ "demo-skill": 2 });
+    // export: dumps the ledger as a JSON array (corrupt lines skipped).
+    const dumpPath = join(base, "ledger-dump.json");
+    const exportCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_ledger', {'export': " + JSON.stringify(dumpPath) + "})",
+      "print(json.dumps({'text': json.loads(text), 'code': code}))",
+    ].join("; ");
+    const exported = JSON.parse(execFileSync(PY, ["-c", exportCode], { encoding: "utf8" }).trim());
+    expect(exported.code).toBe(0);
+    expect(exported.text.exported).toBe(2);
+    expect(JSON.parse(readFileSync(dumpPath, "utf-8"))).toHaveLength(2);
+    // purge: clears the ledger.
+    const purgeCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_ledger', {'purge': True})",
+      "print(json.dumps({'text': json.loads(text), 'code': code}))",
+    ].join("; ");
+    const purged = JSON.parse(execFileSync(PY, ["-c", purgeCode], { encoding: "utf8" }).trim());
+    expect(purged.code).toBe(0);
+    expect(purged.text.purged).toBe(3);
+    // After purge, stats report zero entries and doctor's ledger check is ok.
+    const afterCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_ledger', {'stats': True})",
+      "print(json.dumps({'text': json.loads(text), 'code': code}))",
+    ].join("; ");
+    const after = JSON.parse(execFileSync(PY, ["-c", afterCode], { encoding: "utf8" }).trim());
+    expect(after.code).toBe(0);
+    expect(after.text.exists).toBe(false);
+    // doctor includes the ledger + freshness checks (healthy state -> ok).
+    const doctorCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('doctor', {})",
+      "print(json.dumps(json.loads(text)))",
+    ].join("; ");
+    const doc = JSON.parse(execFileSync(PY, ["-c", doctorCode], { encoding: "utf8" }).trim());
+    expect(doc.checks.some((c: { check: string }) => c.check === "ledger")).toBe(true);
+    expect(doc.checks.some((c: { check: string }) => c.check === "freshness")).toBe(true);
   });
 });
 
@@ -1893,6 +1976,150 @@ describe("tools gc and list --json risk", () => {
       const tool = parsed.find((entry: { name: string }) => entry.name === "demo-skill__hello");
       expect(tool).toBeTruthy();
       expect(tool.risk).toBe("low");
+    } finally {
+      console.log = orig;
+    }
+  });
+});
+
+describe("tools ledger lifecycle + registry freshness", () => {
+  test("ledgerCheck detects corrupt lines and out-of-order timestamps", () => {
+    const { registry } = tempSkills({});
+    mkdirSync(registry, { recursive: true });
+    const ledger = join(registry, "tool-runs.jsonl");
+    writeFileSync(
+      ledger,
+      [
+        JSON.stringify({ ts: "2024-01-01T00:00:00.000Z", name: "a", status: 0, duration_ms: 1 }),
+        JSON.stringify({ ts: "2024-01-02T00:00:00.000Z", name: "b", status: 1, duration_ms: 2 }),
+        "this is not json",
+        JSON.stringify({ ts: "2024-01-01T00:00:01.000Z", name: "c", status: 0, duration_ms: 3 }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    const check = ledgerCheck(registry);
+    expect(check.exists).toBe(true);
+    expect(check.total).toBe(4);
+    expect(check.valid).toBe(3);
+    expect(check.corrupt).toBe(1);
+    expect(check.out_of_order).toBe(1); // c's ts predates b's
+    expect(check.first_ts).toBe(Date.parse("2024-01-01T00:00:00.000Z"));
+    expect(check.last_ts).toBe(Date.parse("2024-01-01T00:00:01.000Z"));
+    expect(ledgerCheck(join(registry, "nope"))).toEqual({ exists: false, total: 0, valid: 0, corrupt: 0, out_of_order: 0, first_ts: null, last_ts: null, bytes: 0 });
+  });
+
+  test("ledgerStats aggregates ok/fail, per-skill and per-tool counts", () => {
+    const { registry } = tempSkills({});
+    mkdirSync(registry, { recursive: true });
+    writeFileSync(
+      join(registry, "tool-runs.jsonl"),
+      [
+        JSON.stringify({ ts: "2024-01-01T00:00:00.000Z", name: "demo-skill__hello", skill: "demo-skill", status: 0, duration_ms: 10 }),
+        JSON.stringify({ ts: "2024-01-02T00:00:00.000Z", name: "demo-skill__hello", skill: "demo-skill", status: 1, duration_ms: 30 }),
+        JSON.stringify({ ts: "2024-01-03T00:00:00.000Z", name: "other-skill__go", skill: "other-skill", status: 0, duration_ms: 20 }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    const stats = ledgerStats(registry);
+    expect(stats.total).toBe(3);
+    expect(stats.corrupt).toBe(0);
+    expect(stats.ok).toBe(2);
+    expect(stats.fail).toBe(1);
+    expect(stats.avg_duration_ms).toBe(20);
+    expect(stats.by_skill).toEqual({ "demo-skill": 2, "other-skill": 1 });
+    expect(stats.by_tool).toEqual({ "demo-skill__hello": 2, "other-skill__go": 1 });
+  });
+
+  test("tools ledger --stats/--export/--purge manage the ledger lifecycle", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const payload = scan([dirs]);
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // --stats prints the summary and exits 0 on a healthy ledger.
+      expect(cmdTools({ registry, dirs, toolsAction: "ledger", ledgerStats: true })).toBe(0);
+      const text = out.join("\n");
+      expect(text).toContain("2 valid");
+      expect(text).toContain("integrity: ok");
+      // --export dumps the full ledger as JSON (newest first).
+      out.length = 0;
+      const dump = join(registry, "ledger-dump.json");
+      expect(cmdTools({ registry, dirs, toolsAction: "ledger", ledgerExport: dump })).toBe(0);
+      const parsed = JSON.parse(readFileSync(dump, "utf-8"));
+      expect(parsed).toHaveLength(2);
+      expect(parsed[0].name).toBe("demo-skill__hello");
+      // --purge clears the ledger; stats then report zero entries.
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "ledger", ledgerPurge: true })).toBe(0);
+      expect(readToolRuns(registry)).toHaveLength(0);
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "ledger", ledgerStats: true })).toBe(0);
+      expect(out.join("\n")).toContain("not present yet");
+      // --stats exits 2 when the ledger contains corrupt lines.
+      writeFileSync(join(registry, "tool-runs.jsonl"), "not-json\n", "utf-8");
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "ledger", ledgerStats: true })).toBe(2);
+      expect(out.join("\n")).toContain("integrity: FAIL");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("registryStale reports stale and loadRegistry auto-refreshes", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const payload = scan([dirs]);
+    mkdirSync(registry, { recursive: true });
+    writeFileSync(join(registry, "registry.json"), JSON.stringify(payload, null, 2), "utf-8");
+    // Fresh registry: not stale, loads from file (skills count unchanged).
+    expect(registryStale(registry, dirs).stale).toBe(false);
+    expect(loadRegistry(registry, dirs, false).skills.length).toBe(1);
+    // Add a new skill with a clearly newer mtime -> stale.
+    const fresh = join(dirs, "fresh-skill");
+    mkdirSync(fresh, { recursive: true });
+    writeFileSync(join(fresh, "SKILL.md"), "---\nname: fresh-skill\ndescription: Newly added skill.\n---\n");
+    const future = new Date(Date.now() + 60_000);
+    utimesSync(join(fresh, "SKILL.md"), future, future);
+    const staleness = registryStale(registry, dirs);
+    expect(staleness.stale).toBe(true);
+    expect(staleness.reason).toContain("fresh-skill");
+    // loadRegistry auto-refreshes: the new skill is now indexed.
+    const refreshed = loadRegistry(registry, dirs, false);
+    expect(refreshed.skills.some((s: { name: string }) => s.name === "fresh-skill")).toBe(true);
+  });
+
+  test("doctor fails on a corrupt ledger and passes after repair", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    mkdirSync(registry, { recursive: true });
+    writeFileSync(join(registry, "tool-runs.jsonl"), "not-json\n", "utf-8");
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      expect(cmdDoctor({ registry, dirs, json: true })).toBe(1);
+      const failed = JSON.parse(out.join("\n"));
+      const ledger = failed.checks.find((c: { check: string }) => c.check === "ledger");
+      expect(ledger).toBeTruthy();
+      expect(ledger.ok).toBe(false);
+      const freshness = failed.checks.find((c: { check: string }) => c.check === "freshness");
+      expect(freshness).toBeTruthy();
+      // Repair: doctor is green again and reports the ledger check ok.
+      out.length = 0;
+      rmSync(join(registry, "tool-runs.jsonl"), { force: true });
+      expect(cmdDoctor({ registry, dirs, json: true })).toBe(0);
+      const passed = JSON.parse(out.join("\n"));
+      expect(passed.checks.find((c: { check: string }) => c.check === "ledger").ok).toBe(true);
     } finally {
       console.log = orig;
     }

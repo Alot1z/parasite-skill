@@ -1,8 +1,15 @@
-import { loadRegistry, loadSetsWithProject, registryDir, scoreIdea } from "../engine.js";
+import { loadRegistry, loadSetsWithProject, registryDir, registryStale, scoreIdea } from "../engine.js";
 
 export function cmdRoute(args) {
   const reg = registryDir(args.registry);
+  // Freshness note: when skills changed since the last scan, loadRegistry
+  // re-scans automatically below — tell the user so routing results are not
+  // mistaken for a cache hit. Never printed under --json (keeps stdout clean).
+  const staleness = registryStale(reg, args.dirs);
   const payload = loadRegistry(reg, args.dirs, args.force);
+  if (staleness.stale && !args.force && !args.json) {
+    console.error(`note: registry was stale (${staleness.reason}); re-scanned automatically for fresh routing`);
+  }
   if (!args.idea) {
     console.error('missing idea text: parasite-skill route "<idea>" [--set <name>]');
     return 1;

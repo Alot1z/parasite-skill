@@ -4,6 +4,7 @@
 import { createInterface } from "node:readline";
 import { VERSION, loadRegistry, registryDir } from "./engine.js";
 import { auditSkillTools, filterToolsByPolicy, listSkillTools, renderToolsDocs, runSkillTool } from "./ai-tools.js";
+import { cmdTools } from "./commands/tools.js";
 import {
   cmdDoctor,
   cmdExport,
@@ -147,6 +148,46 @@ const TOOLS = [
     },
   },
   {
+    name: "skill_tools_history",
+    description: "Read the tool-run audit ledger (tool-runs.jsonl) with filters: name/skill globs, status (ok|fail), since/until ISO timestamps, limit. Parity with the JS twin's `tools history`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        skill: { type: "string" },
+        status: { type: "string" },
+        since: { type: "string" },
+        until: { type: "string" },
+        limit: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "skill_tools_gc",
+    description: "Prune stale registry artifacts (agent reports + audit ledger) by age/keep, or with status: true report the gc posture (policy, last/next sweep, throttle, stale dry-run) without pruning. Parity with the JS twin's `tools gc` / `tools gc --status`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "boolean" },
+        age_days: { type: "number" },
+        keep: { type: "number" },
+        dry_run: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "skill_tools_ledger",
+    description: "Audit-ledger lifecycle (tool-runs.jsonl): stats reports integrity (valid/corrupt/out-of-order) + aggregates (ok/fail, avg duration, per-skill/per-tool; exits 2 on corrupt), export dumps the full ledger as a JSON array to a file, purge clears it. Parity with the JS twin's `tools ledger`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        stats: { type: "boolean" },
+        export: { type: "string" },
+        purge: { type: "boolean" },
+      },
+    },
+  },
+  {
     name: "skill_tools_run",
     description: "Explicitly execute one skill AI-tool. Bounded, captured, and redacted; never runs automatically.",
     inputSchema: {
@@ -273,6 +314,43 @@ async function runTool(name, params = {}) {
           console.log(JSON.stringify({ ok: false, name: params.name, error: String(err.message ?? err) }, null, 2));
           code = 1;
         }
+        break;
+      }
+      case "skill_tools_history": {
+        code = cmdTools({
+          ...ctx,
+          toolsAction: "history",
+          json: params.json !== false,
+          limit: params.limit,
+          historyName: params.name,
+          historySkill: params.skill,
+          historyStatus: params.status,
+          historySince: params.since,
+          historyUntil: params.until,
+        });
+        break;
+      }
+      case "skill_tools_gc": {
+        code = cmdTools({
+          ...ctx,
+          toolsAction: "gc",
+          json: params.json !== false,
+          status: params.status === true,
+          age: params.age_days,
+          keep: params.keep,
+          dryRun: params.dry_run === true,
+        });
+        break;
+      }
+      case "skill_tools_ledger": {
+        code = cmdTools({
+          ...ctx,
+          toolsAction: "ledger",
+          json: params.json !== false,
+          ledgerStats: params.stats === true,
+          ledgerExport: params.export,
+          ledgerPurge: params.purge === true,
+        });
         break;
       }
       default: throw new Error(`unknown tool: ${name}`);

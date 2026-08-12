@@ -6,8 +6,8 @@
 // so CI can gate on it.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadProjectConfig, loadRegistry, registryDir } from "../engine.js";
-import { auditSkillTools, filterToolsByPolicy, listSkillTools, resolveToolRun } from "../ai-tools.js";
+import { loadProjectConfig, loadRegistry, registryDir, registryStale } from "../engine.js";
+import { auditSkillTools, filterToolsByPolicy, ledgerCheck, listSkillTools, resolveToolRun } from "../ai-tools.js";
 import { planGc, runAutoGc } from "./tools.js";
 import { mcpRegistrationStatus } from "../mcp-register.js";
 
@@ -20,6 +20,14 @@ export function cmdDoctor(args = {}) {
     failed++;
   };
   const ok = (name, detail) => checks.push({ check: name, ok: true, detail });
+
+  // 0. Registry freshness: skills newer than registry.json mean the cached
+  // payload is stale. Informational only — loadRegistry self-heals below by
+  // re-scanning, so this is a signal about how fresh the load was, never a
+  // gate that fails CI on a merely outdated cache.
+  const staleness = registryStale(reg, args.dirs);
+  if (!staleness.stale) ok("freshness", staleness.reason);
+  else ok("freshness", `${staleness.reason} — loadRegistry re-scans automatically`);
 
   // 1. Registry loads and every skill is spec-valid.
   let payload;
@@ -137,6 +145,19 @@ export function cmdDoctor(args = {}) {
     }
   } catch (err) {
     fail("mcp", `MCP registration check failed: ${err.message ?? err}`);
+  }
+
+  // 8. Audit ledger integrity: a corrupt tool-runs.jsonl means the append path
+  // broke (or the file was hand-edited) — a failing check so CI catches it.
+  // Out-of-order timestamps and absence are informational.
+  const ledger = ledgerCheck(reg);
+  if (!ledger.exists) {
+    ok("ledger", "no audit ledger yet (tool-runs.jsonl absent)");
+  } else if (ledger.corrupt) {
+    fail("ledger", `${ledger.corrupt}/${ledger.total} corrupt line(s) in tool-runs.jsonl — inspect with tools history, repair, or tools ledger --purge`);
+  } else {
+    const extra = ledger.out_of_order ? `, ${ledger.out_of_order} out-of-order timestamp(s)` : "";
+    ok("ledger", `${ledger.total} entries (${ledger.bytes} bytes)${extra}`);
   }
 
   if (args.json) {

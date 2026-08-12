@@ -444,11 +444,46 @@ def scan(extra_dirs: str | None, registry: Path, force: bool = False) -> dict:
     return payload
 
 
+def _registry_stale(registry: Path, extra_dirs: str | None) -> dict:
+    """Freshness check (JS registryStale parity): any SKILL.md newer than
+    registry.json means the cached payload is stale. 2s epsilon guards
+    coarse-mtime filesystems; only dirs containing a SKILL.md count as signal."""
+    f = registry / "registry.json"
+    try:
+        reg_ms = f.stat().st_mtime * 1000
+    except OSError:
+        return {"stale": True, "reason": "no registry.json yet", "newer": []}
+    newer = []
+    for base in expand_dirs(extra_dirs):
+        try:
+            names = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for name in names:
+            if name.startswith("."):
+                continue
+            md = base / name / "SKILL.md"
+            try:
+                if md.stat().st_mtime * 1000 - reg_ms > 2000:
+                    newer.append(name)
+            except OSError:
+                continue
+    if newer:
+        return {"stale": True, "reason": f"{len(newer)} skill(s) newer than the registry: {', '.join(newer[:5])}", "newer": newer}
+    return {"stale": False, "reason": "registry is current", "newer": []}
+
+
 def load_registry(registry: Path, extra_dirs: str | None, force: bool = False) -> dict:
     f = registry / "registry.json"
     if not force and f.exists():
         try:
-            return json.loads(f.read_text(encoding="utf-8"))
+            payload = json.loads(f.read_text(encoding="utf-8"))
+            # Freshness (JS loadRegistry parity): when a real skill on disk is
+            # newer than the registry, re-scan so routing/planning reflect new
+            # or edited skills without a manual forced scan.
+            if not _registry_stale(registry, extra_dirs)["stale"]:
+                return payload
+            return scan(extra_dirs, registry, force=True)
         except json.JSONDecodeError:
             pass
     return scan(extra_dirs, registry, force)

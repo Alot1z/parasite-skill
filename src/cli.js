@@ -50,7 +50,7 @@ COMMANDS
   agents    Generate AGENTS.md (default), list/show the agent profiles, or
             run <profile>/--all with a request
   graph     Emit a skill or typed ecosystem graph (--ecosystem, --json | --dot | --mmd, --top N, --threshold X)
-  tools     list|describe|run|run-batch|dry-run|audit|verify|docs|policy|history|gc
+  tools     list|describe|run|run-batch|dry-run|audit|verify|docs|policy|history|ledger|gc
             Callable AI-tools: skill scripts/hooks/tools as bounded, explicit,
             captured tools for the host LLM (--json)
   --version | --help  GLOBAL FLAGS
@@ -97,6 +97,9 @@ TOOLS FLAGS
   --history-status S  tools history: filter by status (ok|fail)
   --history-since ISO  tools history: only entries at/after this timestamp
   --history-until ISO  tools history: only entries at/before this timestamp
+  --stats          tools ledger: integrity + aggregate stats (exits 2 on corrupt)
+  --export FILE    tools ledger: dump the whole ledger as a JSON array
+  --purge          tools ledger: clear the ledger entirely
   --age N          tools gc: prune agent reports/ledger entries older than N days
   --keep N         tools gc: keep only the N most recent agent reports/ledger entries
                    (falls back to the project gc policy in parasite-skill.json)
@@ -220,6 +223,7 @@ COMMANDS
   docs                 Generate a TOOLS.md reference of the tool surface
   policy               Read or edit the project tools policy (see below)
   history              Show the local execution ledger (--clear to reset)
+  ledger               Ledger lifecycle: --stats | --export FILE | --purge
   gc                   Prune stale registry artifacts (agent reports + ledger)
 
 FLAGS
@@ -393,6 +397,9 @@ export function parseFlags(argv) {
       case "--timeout-ms": { const v = value(++i, a); if (v !== undefined) flags.timeoutMs = num(v); break; }
       case "--max-tools": { const v = value(++i, a); if (v !== undefined) flags.maxTools = num(v); break; }
       case "--clear": flags.clear = true; break;
+      case "--stats": flags.ledgerStats = true; break;
+      case "--export": { const v = value(++i, a); if (v !== undefined) flags.ledgerExport = v; break; }
+      case "--purge": flags.ledgerPurge = true; break;
       case "--continue": flags.continue = true; break;
       case "--strict": flags.strict = true; break;
       case "--baseline": flags.baseline = true; break;
