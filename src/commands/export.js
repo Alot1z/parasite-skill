@@ -160,15 +160,18 @@ export function cmdExport(args) {
         ? project.gc
         : null;
   const gcPosture = gcPolicy ? gcMarkerPosture(reg, gcPolicy) : null;
+  const ledgerPolicy =
+    gcPolicy && typeof gcPolicy.ledger === "object" && !Array.isArray(gcPolicy.ledger) ? gcPolicy.ledger : null;
   const gc = gcPolicy
     ? {
         age_days: typeof gcPolicy.ageDays === "number" ? gcPolicy.ageDays : null,
         keep: typeof gcPolicy.keep === "number" ? gcPolicy.keep : null,
         auto: gcPolicy.auto === true,
         interval_days: typeof gcPolicy.intervalDays === "number" ? gcPolicy.intervalDays : null,
+        ledger: ledgerPolicy ? { age_days: typeof ledgerPolicy.ageDays === "number" ? ledgerPolicy.ageDays : null, keep: typeof ledgerPolicy.keep === "number" ? ledgerPolicy.keep : null } : null,
         last_sweep_ms: gcPosture?.lastRunMs ?? null,
         next_sweep_ms: gcPosture?.nextRunMs ?? null,
-        stale: planGc(reg, { ageDays: gcPolicy.ageDays, keep: gcPolicy.keep, dryRun: true }).totals,
+        stale: planGc(reg, { ageDays: gcPolicy.ageDays, keep: gcPolicy.keep, ledgerAgeDays: ledgerPolicy?.ageDays, ledgerKeep: ledgerPolicy?.keep, dryRun: true }).totals,
       }
     : null;
   const sync = syncState();

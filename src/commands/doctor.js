@@ -101,16 +101,30 @@ export function cmdDoctor(args = {}) {
   // a failure: the runner is intentionally waiting for the next interval.
   const gcPolicy =
     args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : project?.gc ?? null;
-  if (gcPolicy && (Number.isFinite(gcPolicy.ageDays) || Number.isFinite(gcPolicy.keep))) {
-    const { totals } = planGc(reg, { ageDays: gcPolicy.ageDays, keep: gcPolicy.keep, dryRun: true });
+  const ledgerPolicy =
+    gcPolicy && typeof gcPolicy.ledger === "object" && !Array.isArray(gcPolicy.ledger) ? gcPolicy.ledger : null;
+  const hasGcKnob =
+    !!gcPolicy &&
+    ((Number.isFinite(gcPolicy.ageDays) && gcPolicy.ageDays >= 0) ||
+      (Number.isFinite(gcPolicy.keep) && gcPolicy.keep >= 0) ||
+      (Number.isFinite(ledgerPolicy?.ageDays) && ledgerPolicy.ageDays >= 0) ||
+      (Number.isFinite(ledgerPolicy?.keep) && ledgerPolicy.keep >= 0));
+  if (hasGcKnob) {
+    const { totals } = planGc(reg, {
+      ageDays: gcPolicy.ageDays,
+      keep: gcPolicy.keep,
+      ledgerAgeDays: ledgerPolicy?.ageDays,
+      ledgerKeep: ledgerPolicy?.keep,
+      dryRun: true,
+    });
     const stale = totals.agent_files + totals.ledger_entries;
     const throttled = !!autoGc?.throttled;
     if (gcPolicy.auto === true && stale && !throttled) fail("gc", `${stale} stale artifact(s) under the auto gc policy; run tools gc to clear`);
     else if (gcPolicy.auto === true && stale && throttled)
       ok("gc", `${stale} stale artifact(s) under the auto gc policy (auto sweep throttled to once per ${gcPolicy.intervalDays}d)`);
-    else ok("gc", stale ? `${stale} stale artifact(s) under the gc policy (age ${gcPolicy.ageDays ?? "-"}d, keep ${gcPolicy.keep ?? "-"}); run tools gc` : "no stale artifacts under the gc policy");
+    else ok("gc", stale ? `${stale} stale artifact(s) under the gc policy (age ${gcPolicy.ageDays ?? "-"}d, keep ${gcPolicy.keep ?? "-"}${ledgerPolicy ? `, ledger age ${ledgerPolicy.ageDays ?? "-"}d / keep ${ledgerPolicy.keep ?? "-"}` : ""}); run tools gc` : "no stale artifacts under the gc policy");
   } else {
-    ok("gc", "no gc TTL policy configured (parasite-skill.json \"gc\": { \"ageDays\": N, \"keep\": N })");
+    ok("gc", "no gc TTL policy configured (parasite-skill.json \"gc\": { \"ageDays\": N, \"keep\": N, \"ledger\": { \"ageDays\", \"keep\" } })");
   }
 
   // 7. MCP registration: every client config file that exists must parse, and

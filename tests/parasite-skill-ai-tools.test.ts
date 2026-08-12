@@ -4,7 +4,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scan, composePayload, mergeConfig, loadRegistry, registryStale } from "../src/engine.js";
+import { scan, composePayload, mergeConfig, loadRegistry, registryStale, scoreIdea } from "../src/engine.js";
 import { planGc } from "../src/commands/tools.js";
 import { auditSkillTools, filterToolsByPolicy, ledgerCheck, ledgerStats, listSkillTools, policyFor, readToolRuns, resolveToolRun, runSkillTool, validateToolArgs } from "../src/ai-tools.js";
 import { cmdTools } from "../src/commands/tools.js";
@@ -613,6 +613,65 @@ describe("Python MCP twin parity", () => {
     ].join("; ");
     execFileSync(PY, ["-c", applyCode], { cwd: base, encoding: "utf8" });
     expect(existsSync(stale)).toBe(false);
+  });
+
+  test("python skill_tools_gc honors independent ledger retention knobs", () => {
+    const base = join(tmpdir(), `sr-py-gc-ledger-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const agentsDir = join(regDir, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    mkdirSync(join(base, ".agents", "skills", "demo-skill"), { recursive: true });
+    const stale = join(agentsDir, "stale-report.json");
+    writeFileSync(stale, JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    utimesSync(stale, new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
+    // Seed two old (2020) ledger entries that a ledger-age policy must drop.
+    writeFileSync(
+      join(regDir, "tool-runs.jsonl"),
+      Array.from({ length: 2 }, () =>
+        JSON.stringify({ ts: "2020-01-01T00:00:00.000Z", name: "demo-skill__hello", skill: "demo-skill", status: 0, duration_ms: 1 }),
+      ).join("\n") + "\n",
+      "utf-8",
+    );
+    const scriptsDir = join(process.cwd(), "skill", "scripts");
+    const dryCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      // Shared age_days 0 would drop both reports and ledger entries; the
+      // ledger_age_days 3650 (10y) override shields the ledger (JS planGc parity).
+      "text, code = mcp_server.run_tool('skill_tools_gc', {'age_days': 0, 'ledger_age_days': 3650, 'dry_run': True})",
+      "print(json.dumps(json.loads(text)))",
+    ].join("; ");
+    const dry = JSON.parse(execFileSync(PY, ["-c", dryCode], { cwd: base, encoding: "utf8" }).trim());
+    expect(dry.removed.agent_files).toEqual(["stale-report.json"]);
+    expect(dry.totals.ledger_entries).toBe(0);
+    // Ledger-only policy: reports untouched, old ledger entries pruned.
+    const ledgerOnlyCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_gc', {'ledger_age_days': 30, 'dry_run': True})",
+      "print(json.dumps(json.loads(text)))",
+    ].join("; ");
+    const ledgerOnly = JSON.parse(execFileSync(PY, ["-c", ledgerOnlyCode], { cwd: base, encoding: "utf8" }).trim());
+    expect(ledgerOnly.removed.agent_files).toEqual([]);
+    expect(ledgerOnly.totals.ledger_entries).toBe(2);
+    // Applying the ledger-only sweep clears the ledger, keeps the report.
+    const applyCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(scriptsDir) + ")",
+      "import mcp_server",
+      "text, code = mcp_server.run_tool('skill_tools_gc', {'ledger_age_days': 30})",
+      "print(json.dumps(json.loads(text)))",
+    ].join("; ");
+    execFileSync(PY, ["-c", applyCode], { cwd: base, encoding: "utf8" });
+    expect(existsSync(stale)).toBe(true);
+    const afterLedger = readFileSync(join(regDir, "tool-runs.jsonl"), "utf-8").trim();
+    expect(afterLedger).toBe("");
   });
 
   test("python skill_tools_ledger matches the JS ledger surface", () => {
@@ -2314,6 +2373,80 @@ describe("gc TTL policy, sync posture, risk layers", () => {
     expect(mergeConfig({ gc: "nope" }, {}).gc).toBeUndefined();
   });
 
+  test("mergeConfig parses the independent gc.ledger retention sub-policy", () => {
+    const merged = mergeConfig({ gc: { ageDays: 30, keep: 20, auto: true, ledger: { ageDays: 7, keep: 50 } } }, {});
+    expect(merged.gc).toEqual({ ageDays: 30, keep: 20, auto: true, ledger: { ageDays: 7, keep: 50 } });
+    // Invalid ledger sub-policy is dropped with a warning, not accepted.
+    expect(mergeConfig({ gc: { ledger: {} } }, {}).gc).toBeUndefined();
+    expect(mergeConfig({ gc: { ledger: "nope" } }, {}).gc).toBeUndefined();
+  });
+
+  test("planGc applies ledger retention independently via ledgerAgeDays/ledgerKeep", () => {
+    const { registry } = tempSkills({});
+    const agentsDir = join(registry, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    // Seed two agent reports: one old (2020), one new (now). The ledger gets
+    // 2 entries stamped 2020-01-01 so age-based pruning is deterministic.
+    writeFileSync(join(agentsDir, "old-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    const oldStamp = new Date("2020-01-01T00:00:00Z");
+    utimesSync(join(agentsDir, "old-report.json"), oldStamp, oldStamp);
+    writeFileSync(join(agentsDir, "new-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    seedLedger(registry, 2);
+    expect(readToolRuns(registry).length).toBe(2);
+    // Shared ageDays 30 prunes the 2020 report + the 2020 ledger entries.
+    let applied = planGc(registry, { ageDays: 30, dryRun: true });
+    expect(applied.totals.agent_files).toBe(1);
+    expect(applied.totals.ledger_entries).toBe(2);
+    // Ledger override wins: ledgerAgeDays 3650 (10y) shields the 2020 ledger
+    // entries while the shared ageDays still prunes the old report.
+    applied = planGc(registry, { ageDays: 30, ledgerAgeDays: 3650, dryRun: true });
+    expect(applied.totals.agent_files).toBe(1);
+    expect(applied.totals.ledger_entries).toBe(0);
+    // Ledger keep override: shared keep 1 prunes the old report, ledgerKeep
+    // 10 keeps all ledger entries.
+    applied = planGc(registry, { keep: 1, ledgerKeep: 10, dryRun: true });
+    expect(applied.totals.agent_files).toBe(1);
+    expect(applied.totals.ledger_entries).toBe(0);
+    // Ledger-only policy: reports untouched, old ledger entries pruned.
+    applied = planGc(registry, { ledgerAgeDays: 30, dryRun: true });
+    expect(applied.totals.agent_files).toBe(0);
+    expect(applied.totals.ledger_entries).toBe(2);
+  });
+
+  test("tools gc --ledger-age/--ledger-keep override retention for the ledger only", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const agentsDir = join(registry, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(join(agentsDir, "stale-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
+    const oldStamp = new Date("2020-01-01T00:00:00Z");
+    utimesSync(join(agentsDir, "stale-report.json"), oldStamp, oldStamp);
+    seedLedger(registry, 2);
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // Shared --age 30 prunes reports + ledger; --ledger-age 3650 shields the
+      // ledger so only the report goes.
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", age: 30, ledgerAge: 3650 })).toBe(0);
+      expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(false);
+      expect(readToolRuns(registry).length).toBe(2);
+      // --ledger-keep shields the ledger from a shared --keep.
+      seedLedger(registry, 2);
+      writeFileSync(join(agentsDir, "stale-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
+      utimesSync(join(agentsDir, "stale-report.json"), oldStamp, oldStamp);
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", keep: 1, ledgerKeep: 10 })).toBe(0);
+      expect(readToolRuns(registry).length).toBe(2);
+      // Ledger-only knobs are a valid gc invocation (no shared knob needed).
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", ledgerAge: 30 })).toBe(0);
+      expect(readToolRuns(registry).length).toBe(0);
+    } finally {
+      console.log = orig;
+    }
+  });
+
   test("tools gc falls back to the project gc policy when no CLI knobs are given", () => {
     const { dirs, registry } = tempSkills({
       "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
@@ -2547,6 +2680,70 @@ describe("gc TTL policy, sync posture, risk layers", () => {
     expect(result).toContain("True");
     expect(result).toContain("low");
     expect(result).toContain("no-path");
+  });
+});
+
+describe("hyphen routing", () => {
+  test("multi-word ideas match hyphenated skill names (fresh skill -> fresh-skill)", () => {
+    const { dirs } = tempSkills({
+      "fresh-skill/SKILL.md": "---\nname: fresh-skill\ndescription: Newly added skill for routing tests.\n---\n",
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+    });
+    const payload = scan([dirs]);
+    const names = payload.skills.map((s: { name: string }) => s.name);
+    expect(names).toContain("fresh-skill");
+    // The scan keywords include the hyphen-split parts ("skill" is a
+    // stopword, so only the non-stopword part lands), and the name itself
+    // stays as a single token so whole-name ideas still hit.
+    const fresh = payload.skills.find((s: { name: string }) => s.name === "fresh-skill");
+    expect(fresh.keywords).toContain("fresh");
+    expect(fresh.keywords).toContain("fresh-skill");
+    // A two-word idea matches because the split part lands in keywords and
+    // the name-token set both.
+    const { scored } = scoreIdea(payload, "fresh skill");
+    const names2 = scored.map(([name]: [string, number]) => name);
+    expect(names2[0]).toBe("fresh-skill");
+    // Underscored names split too (expandHyphenated splits on - and _).
+    const { dirs: dirs2 } = tempSkills({
+      "code_review/SKILL.md": "---\nname: code_review\ndescription: Review code for quality issues.\n---\n",
+    });
+    const payload2 = scan([dirs2]);
+    const { scored: scored2 } = scoreIdea(payload2, "code review");
+    expect(scored2.map(([name]: [string, number]) => name)[0]).toBe("code_review");
+  });
+
+  test("python twin ids() matches hyphenated names for multi-word ideas", () => {
+    const base = join(tmpdir(), `sr-py-hyphen-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    const skillDir = join(base, ".agents", "skills", "fresh-skill");
+    mkdirSync(skillDir, { recursive: true });
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: fresh-skill\ndescription: Newly added skill for routing tests.\n---\n");
+    writeFileSync(
+      join(regDir, "registry.json"),
+      JSON.stringify({
+        skills: [
+          {
+            name: "fresh-skill",
+            path: skillDir,
+            keywords: ["fresh", "skill", "new"],
+            bodyKeywords: [],
+          },
+        ],
+      }),
+    );
+    const code = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, 'skill/scripts')",
+      "import conductor",
+      "reg = json.load(open(os.path.join(os.environ['PARASITE_SKILL_HOME'], '.agents', 'skills', '.parasite-skill', 'registry.json')))",
+      "ids = conductor.ids(reg, 'fresh skill')",
+      "print(json.dumps(ids))",
+    ].join("; ");
+    const result = JSON.parse(execFileSync(PY, ["-c", code], { encoding: "utf8" }).trim());
+    expect(result["fresh-skill"]).toBeGreaterThan(0);
   });
 });
 

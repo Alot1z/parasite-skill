@@ -134,6 +134,25 @@ jobs:
           # tools ledger --purge clears; stats then report zero entries.
           node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools ledger --purge
           node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools ledger --stats --json | grep -q '"total": 0'
+          # Ledger retention: seed two runs stamped 2020, then a ledger-only
+          # TTL (--ledger-age 30, project gc.ledger sub-policy) must expire
+          # those old runs while keeping the fresh one and any agent reports.
+          # cd into the home so the project config file is found.
+          cd "$PARASITE_SKILL_HOME"
+          printf '%s\n' '{ "gc": { "ledger": { "ageDays": 30 } } }' \
+            > "$PARASITE_SKILL_HOME/parasite-skill.json"
+          for i in 1 2; do
+            printf '%s\n' "{\"ts\":\"2020-01-01T00:00:00.000Z\",\"name\":\"demo-skill__hello\",\"skill\":\"demo-skill\",\"status\":0,\"duration_ms\":1}" \
+              >> "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill/tool-runs.jsonl"
+          done
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools run demo-skill__hello >/dev/null
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools gc --status --json \
+            | grep -q '"ledger"'
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools gc --ledger-age 30
+          # 2 expired + 1 fresh: only the fresh run survives.
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" tools ledger --stats --json \
+            | grep -q '"total": 1'
+          cd "$GITHUB_WORKSPACE"
           # Doctor integrity: a corrupt ledger is a failing check; repaired, green.
           echo 'not-json' >> "$PARASITE_SKILL_HOME/.agents/skills/.parasite-skill/tool-runs.jsonl"
           if node "$GITHUB_WORKSPACE/bin/parasite-skill.js" doctor --json >/dev/null 2>&1; then
@@ -152,9 +171,9 @@ jobs:
           touch -d "+5 seconds" "$PARASITE_SKILL_HOME/.agents/skills/fresh-skill/SKILL.md"
           out="$(node "$GITHUB_WORKSPACE/bin/parasite-skill.js" route 'fresh skill' 2>&1 >/dev/null || true)"
           echo "$out" | grep -q 'registry was stale'
-          # Route on a keyword from the new skill's description (hyphenated
-          # names tokenize as one token, so a two-word idea would not match).
-          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" route 'added' --json | grep -q 'fresh-skill'
+          # Hyphen routing: the two-word idea now matches the hyphenated skill
+          # name because the scanner and scorer both expand hyphen parts.
+          node "$GITHUB_WORKSPACE/bin/parasite-skill.js" route 'fresh skill' --json | grep -q 'fresh-skill'
           echo "ledger lifecycle + freshness gate ok"
       - name: Python-twin parity gate (export gc posture + gc tool + doctor)
         shell: bash

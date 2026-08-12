@@ -202,6 +202,19 @@ def tokenize(text: str) -> list[str]:
     return [stem(w) for w in words if w not in STOPWORDS and len(w) > 1]
 
 
+def expand_hyphenated(tokens: list[str]) -> list[str]:
+    """Expand hyphenated tokens into their parts (JS expandHyphenated parity) so
+    a multi-word idea ("fresh skill") matches a hyphenated skill name
+    ("fresh-skill") and its scan keywords. Keeps the whole token, then adds
+    each hyphen-split part (stemmed, deduped)."""
+    out = set(tokens)
+    for token in tokens:
+        for part in re.split(r"[-_]", token):
+            if len(part) > 1 and part not in STOPWORDS:
+                out.add(stem(part))
+    return sorted(out)
+
+
 ASSET_DIRS = ("references", "templates", "scripts", "assets", "hooks", "prompts", "tools", "examples", "docs")
 SAFE_EXCERPT_EXTENSIONS = {".md", ".mdx", ".txt"}
 SENSITIVE_ASSET_NAME = re.compile(r"(^|[._-])(env|secret|credential|password|token|private[-_]?key)([._-]|$)", re.I)
@@ -414,7 +427,7 @@ def scan_skill_dir(skill_path: Path) -> dict | None:
         "assets": assets,
         "languages": sorted(languages),
         "tags": infer_tags(name, description),
-        "keywords": sorted(set(tokenize(f"{name} {description}") + infer_tags(name, description))),
+        "keywords": sorted(set(expand_hyphenated(tokenize(f"{name} {description}")) + infer_tags(name, description))),
         "bodyKeywords": body_keywords,
         "spec_ok": not issues,
         "issues": issues,
@@ -497,7 +510,9 @@ def ids(registry: dict, text: str) -> dict[str, float]:
         for k in set(s.get("keywords", []) + s.get("bodyKeywords", [])):
             df[k] = df.get(k, 0) + 1
     tokens = tokenize(text)
-    name_sets = {s["name"]: set(tokenize(s["name"])) for s in skills}
+    # Name match covers the whole hyphenated token and its split parts, so
+    # "fresh skill" scores against a skill literally named "fresh-skill".
+    name_sets = {s["name"]: set(expand_hyphenated(tokenize(s["name"]))) for s in skills}
     out: dict[str, float] = {}
     for s in skills:
         kw = set(s.get("keywords", []))

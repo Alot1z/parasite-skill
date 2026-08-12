@@ -100,6 +100,8 @@ TOOLS FLAGS
   --stats          tools ledger: integrity + aggregate stats (exits 2 on corrupt)
   --export FILE    tools ledger: dump the whole ledger as a JSON array
   --purge          tools ledger: clear the ledger entirely
+  --ledger-age N   tools gc: retain ledger entries younger than N days only
+  --ledger-keep N  tools gc: retain only the N newest ledger entries
   --age N          tools gc: prune agent reports/ledger entries older than N days
   --keep N         tools gc: keep only the N most recent agent reports/ledger entries
                    (falls back to the project gc policy in parasite-skill.json)
@@ -400,6 +402,8 @@ export function parseFlags(argv) {
       case "--stats": flags.ledgerStats = true; break;
       case "--export": { const v = value(++i, a); if (v !== undefined) flags.ledgerExport = v; break; }
       case "--purge": flags.ledgerPurge = true; break;
+      case "--ledger-age": { const v = value(++i, a); if (v !== undefined) flags.ledgerAge = num(v); break; }
+      case "--ledger-keep": { const v = value(++i, a); if (v !== undefined) flags.ledgerKeep = num(v); break; }
       case "--continue": flags.continue = true; break;
       case "--strict": flags.strict = true; break;
       case "--baseline": flags.baseline = true; break;

@@ -171,6 +171,25 @@ export function tokenize(text) {
     .map(stem);
 }
 
+/**
+ * Expand hyphenated/underscored tokens into their parts so a multi-word idea
+ * ("code review graph") matches a hyphenated skill name ("code-review-graph")
+ * and its scan keywords. Keeps the original whole token, then adds each
+ * hyphen/underscore-split part (stemmed, deduped). Applied at scan time to
+ * keywords and at scoring time to skill names.
+ */
+export function expandHyphenated(tokens) {
+  const out = new Set(tokens);
+  for (const token of tokens) {
+    for (const part of token.split(/[-_]/)) {
+      if (part.length > 1 && !STOPWORDS.has(part)) out.add(stem(part));
+    }
+  }
+  // Deterministic order (Python twin sorts too); callers may use the result
+  // as an array rather than membership, so keep it stable.
+  return [...out].sort();
+}
+
 export function inferTags(name, description) {
   const hay = `${name} ${description}`.toLowerCase();
   return Object.entries(TAG_RULES)
@@ -278,7 +297,7 @@ export function scanSkillDir(skillPath) {
   if (!description) issues.push("missing description");
   else if (description.length < 1 || description.length > 1024) issues.push("description length out of 1-1024");
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) issues.push(`name '${name}' fails spec format`);
-  const keywords = [...new Set([...tokenize(`${name} ${description}`), ...inferTags(name, description)])].sort();
+  const keywords = [...new Set([...expandHyphenated(tokenize(`${name} ${description}`)), ...inferTags(name, description)])].sort();
   // Body keywords: tokenize the SKILL.md content after the frontmatter so
   // routing can match skills whose description is thin but body is rich.
   const bodyMatch = text.match(/^---[ \t]*\r?\n[\s\S]*?^---[ \t]*\r?\n([\s\S]*)$/m);
@@ -702,12 +721,15 @@ export function scoreIdea(payload, idea, sets = SETS) {
   for (const s of skills) {
     const kw = new Set(s.keywords ?? []);
     const bk = new Set(s.bodyKeywords ?? []);
+    // Name match covers the whole hyphenated token and its split parts, so
+    // "fresh skill" scores against a skill literally named "fresh-skill".
+    const nameSet = new Set(expandHyphenated(tokenize(s.name)));
     let score = 0;
     for (const t of tokens) {
       const idf = Math.log(1 + n / (1 + (df[t] ?? 0)));
       if (kw.has(t)) score += 1 + idf;
       else if (bk.has(t)) score += 0.5 * (1 + idf);
-      if (tokenize(s.name).includes(t)) score += 2;
+      if (nameSet.has(t)) score += 2;
     }
     if (score > 0) scored.push([s.name, Math.round(score * 100) / 100]);
   }
@@ -893,10 +915,22 @@ export function mergeConfig(projectConfig, cliFlags) {
       if (typeof projectConfig.gc.keep === "number" && projectConfig.gc.keep >= 0) gc.keep = projectConfig.gc.keep;
       if (typeof projectConfig.gc.auto === "boolean") gc.auto = projectConfig.gc.auto;
       if (typeof projectConfig.gc.intervalDays === "number" && projectConfig.gc.intervalDays >= 0) gc.intervalDays = projectConfig.gc.intervalDays;
+      // Independent ledger retention: "gc": { "ledger": { "ageDays", "keep" } }
+      // overrides the shared knobs for the audit ledger only, so old tool runs
+      // auto-expire without touching agent-report retention.
+      if (typeof projectConfig.gc.ledger === "object" && !Array.isArray(projectConfig.gc.ledger)) {
+        const ledger = {};
+        if (typeof projectConfig.gc.ledger.ageDays === "number" && projectConfig.gc.ledger.ageDays >= 0) ledger.ageDays = projectConfig.gc.ledger.ageDays;
+        if (typeof projectConfig.gc.ledger.keep === "number" && projectConfig.gc.ledger.keep >= 0) ledger.keep = projectConfig.gc.ledger.keep;
+        if (Object.keys(ledger).length) gc.ledger = ledger;
+        else console.error("Warning: 'gc.ledger' in parasite-skill.json has no valid ageDays/keep values");
+      } else if (projectConfig.gc.ledger !== undefined && projectConfig.gc.ledger !== null) {
+        console.error("Warning: invalid 'gc.ledger' in parasite-skill.json (expected object with ageDays/keep)");
+      }
       if (Object.keys(gc).length) merged.gc = gc;
-      else console.error("Warning: 'gc' in parasite-skill.json has no valid ageDays/keep/auto/intervalDays values");
+      else console.error("Warning: 'gc' in parasite-skill.json has no valid ageDays/keep/ledger/auto/intervalDays values");
     } else {
-      console.error("Warning: invalid 'gc' in parasite-skill.json (expected object with ageDays/keep/auto/intervalDays)");
+      console.error("Warning: invalid 'gc' in parasite-skill.json (expected object with ageDays/keep/ledger/auto/intervalDays)");
     }
   }
 

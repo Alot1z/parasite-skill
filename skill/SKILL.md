@@ -67,7 +67,7 @@ parasite-skill tools docs                         # generate registry/TOOLS.md
 parasite-skill tools policy --allow "a__*" --deny "b__*" [--dry-run]
 parasite-skill tools history [--clear] [--name G] [--skill G] [--status ok|fail] [--since ISO] [--until ISO]
 parasite-skill tools ledger [--stats|--export FILE|--purge]  # integrity/aggregates, dump, clear
-parasite-skill tools gc [--age N] [--keep N] [--dry-run]  # prune stale reports/ledger
+parasite-skill tools gc [--age N] [--keep N] [--ledger-age N] [--ledger-keep N] [--dry-run]  # prune stale reports/ledger (ledger-only retention supported)
 parasite-skill export [--public]                   # strip filesystem paths
 parasite-skill export --json                       # print the LLM-ready inventory
 parasite-skill sync --push|--pull [--dry-run]      # preview without side effects
@@ -104,9 +104,13 @@ corrupt — scripts can gate on a broken append path), `--export FILE` dumps
 the whole ledger as a JSON array, `--purge` clears it. `tools gc`
 prunes stale agent reports and ledger entries by age (`--age N` days) or count
 (`--keep N` newest), with `--dry-run` previewing deletions; a project `gc` TTL
-policy (`parasite-skill.json` `"gc": { "ageDays", "keep", "auto", "intervalDays" }`)
+policy (`parasite-skill.json` `"gc": { "ageDays", "keep", "ledger", "auto", "intervalDays" }`)
 becomes the default when no CLI knobs are given, and `doctor` reports the
-policy posture. `tools gc --status` prints the policy plus the auto-sweep
+policy posture. The audit ledger accepts its own retention sub-policy
+(`"gc": { "ledger": { "ageDays", "keep" } }` or the CLI
+`--ledger-age N`/`--ledger-keep N`) so old tool runs auto-expire on a
+different schedule than agent reports. `tools gc --status` prints the policy
+plus the auto-sweep
 throttle posture (last/next sweep, stale dry-run) without pruning. With
 `"auto": true` the sweep is also applied automatically at the `scan`,
 `export`, and `doctor` entry points, so stale artifacts never accumulate
@@ -144,6 +148,10 @@ policy, and schema shape (exit 1 when broken); `tools history` filters the
 ledger by name/skill/status. `refs` pages list each skill's callable AI-tools,
 and `compose` includes the callable tools per selected skill. `trace <file|dir>`
 aggregates skill mentions plus ledger tool runs (`--json` for the AI layer).
+Routing matches hyphenated skill names: a two-word idea like "fresh skill"
+scores against a skill literally named `fresh-skill` (the scanner keeps the
+hyphenated token and its split parts; scoring expands the name the same way —
+both twins, `-` and `_`).
 `llm` exposes tools as native functions, presents declared schemas to the
 model, and executes tool calls in a bounded loop; `--json` includes the
 `tool_calls` trace of what the model requested and how each call resolved.

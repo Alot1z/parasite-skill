@@ -52,9 +52,17 @@ function actionArgs(args) {
  * by mtime and audit-ledger entries by timestamp. Shared by `tools gc`, the
  * doctor health check, and the project `gc` TTL policy.
  */
-export function planGc(reg, { ageDays, keep, dryRun = false } = {}) {
+export function planGc(reg, { ageDays, keep, ledgerAgeDays, ledgerKeep, dryRun = false } = {}) {
   const byAge = Number.isFinite(ageDays) && ageDays >= 0;
   const byKeep = Number.isFinite(keep) && keep >= 0;
+  // Ledger retention can be set independently of agent-report retention via
+  // the project `gc.ledger` policy or --ledger-age/--ledger-keep. When a
+  // ledger-specific knob is absent it falls back to the shared ageDays/keep,
+  // so existing policies keep pruning the ledger exactly as before.
+  const byLedgerAge = Number.isFinite(ledgerAgeDays) && ledgerAgeDays >= 0;
+  const byLedgerKeep = Number.isFinite(ledgerKeep) && ledgerKeep >= 0;
+  const ledgerAge = byLedgerAge ? ledgerAgeDays : ageDays;
+  const ledgerKeepN = byLedgerKeep ? ledgerKeep : keep;
   const now = Date.now();
   const dayMs = 86_400_000;
   const removed = { agent_files: [], ledger_entries: 0, ledger_bytes: 0 };
@@ -97,8 +105,8 @@ export function planGc(reg, { ageDays, keep, dryRun = false } = {}) {
     })
     .sort((a, b) => a.index - b.index);
   let keptLines = parsed;
-  if (byAge) keptLines = keptLines.filter((entry) => now - entry.ts <= ageDays * dayMs);
-  if (byKeep) keptLines = keptLines.slice(-keep);
+  if (byAge || byLedgerAge) keptLines = keptLines.filter((entry) => now - entry.ts <= ledgerAge * dayMs);
+  if (byKeep || byLedgerKeep) keptLines = keptLines.slice(-ledgerKeepN);
   const keptIndexes = new Set(keptLines.map((entry) => entry.index));
   const dropped = rawLines.filter((_, index) => !keptIndexes.has(index));
   removed.ledger_entries = dropped.length;
@@ -158,9 +166,13 @@ export function runAutoGc(reg, args = {}) {
       args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : null;
     const effective = policy ?? loadProjectConfig()?.gc ?? null;
     if (!effective || effective.auto !== true) return null;
+    const ledgerPolicy =
+      effective.ledger && typeof effective.ledger === "object" && !Array.isArray(effective.ledger) ? effective.ledger : null;
     const byAge = Number.isFinite(effective.ageDays) && effective.ageDays >= 0;
     const byKeep = Number.isFinite(effective.keep) && effective.keep >= 0;
-    if (!byAge && !byKeep) return null;
+    const byLedgerAge = Number.isFinite(ledgerPolicy?.ageDays) && ledgerPolicy.ageDays >= 0;
+    const byLedgerKeep = Number.isFinite(ledgerPolicy?.keep) && ledgerPolicy.keep >= 0;
+    if (!byAge && !byKeep && !byLedgerAge && !byLedgerKeep) return null;
     const now = Date.now();
     const dayMs = 86_400_000;
     // intervalDays throttles the automatic sweep. 0 or unset means "always
@@ -178,7 +190,7 @@ export function runAutoGc(reg, args = {}) {
     // A single non-dry call is enough: planGc is already a no-op when nothing
     // is stale (agent files are only removed when listed, the ledger is only
     // rewritten when entries are dropped), so no dry-run pre-pass is needed.
-    const applied = planGc(reg, { ageDays: effective.ageDays, keep: effective.keep, dryRun: false });
+    const applied = planGc(reg, { ageDays: effective.ageDays, keep: effective.keep, ledgerAgeDays: ledgerPolicy?.ageDays, ledgerKeep: ledgerPolicy?.keep, dryRun: false });
     // Record the sweep regardless of how much it pruned: an executed sweep is
     // the throttle reset point, so busy machines stop re-listing the registry.
     try {
@@ -396,6 +408,11 @@ export function cmdTools(args = {}) {
   }
 
   if (sub === "gc") {
+    // Shared helpers: the project policy may carry an independent ledger
+    // retention sub-policy ("gc": { ..., "ledger": { "ageDays", "keep" } })
+    // that overrides the shared knobs for the audit ledger only.
+    const ledgerPolicyOf = (pol) =>
+      pol && typeof pol.ledger === "object" && !Array.isArray(pol.ledger) ? pol.ledger : null;
     // --status is a pure inspection mode: report the gc policy and the
     // auto-sweep throttle posture (marker last/next sweep, whether a sweep
     // right now would be skipped) plus a stale-artifact dry-run. No pruning.
@@ -403,18 +420,28 @@ export function cmdTools(args = {}) {
       const statusPolicy =
         args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : loadProjectConfig()?.gc ?? null;
       const posture = gcMarkerPosture(reg, statusPolicy);
+      const ledgerPolicy = ledgerPolicyOf(statusPolicy);
       const hasKnob =
         !!statusPolicy &&
-        ((Number.isFinite(statusPolicy.ageDays) && statusPolicy.ageDays >= 0) || (Number.isFinite(statusPolicy.keep) && statusPolicy.keep >= 0));
+        ((Number.isFinite(statusPolicy.ageDays) && statusPolicy.ageDays >= 0) ||
+          (Number.isFinite(statusPolicy.keep) && statusPolicy.keep >= 0) ||
+          (Number.isFinite(ledgerPolicy?.ageDays) && ledgerPolicy.ageDays >= 0) ||
+          (Number.isFinite(ledgerPolicy?.keep) && ledgerPolicy.keep >= 0));
       const stale = hasKnob
-        ? planGc(reg, { ageDays: statusPolicy?.ageDays, keep: statusPolicy?.keep, dryRun: true }).totals
+        ? planGc(reg, { ageDays: statusPolicy?.ageDays, keep: statusPolicy?.keep, ledgerAgeDays: ledgerPolicy?.ageDays, ledgerKeep: ledgerPolicy?.keep, dryRun: true }).totals
         : { agent_files: 0, ledger_entries: 0 };
       if (args.json) {
         console.log(
           JSON.stringify(
             {
               policy: statusPolicy
-                ? { ageDays: statusPolicy.ageDays, keep: statusPolicy.keep, auto: statusPolicy.auto === true, intervalDays: statusPolicy.intervalDays }
+                ? {
+                    ageDays: statusPolicy.ageDays,
+                    keep: statusPolicy.keep,
+                    auto: statusPolicy.auto === true,
+                    intervalDays: statusPolicy.intervalDays,
+                    ledger: ledgerPolicy ? { ageDays: ledgerPolicy.ageDays, keep: ledgerPolicy.keep } : null,
+                  }
                 : null,
               last_sweep_ms: posture.lastRunMs,
               next_sweep_ms: posture.nextRunMs,
@@ -426,10 +453,14 @@ export function cmdTools(args = {}) {
           ),
         );
       } else if (!statusPolicy) {
-        console.log('gc: no project gc policy configured (parasite-skill.json "gc": { ageDays, keep, auto, intervalDays })');
+        console.log('gc: no project gc policy configured (parasite-skill.json "gc": { ageDays, keep, ledger, auto, intervalDays })');
       } else {
         const interval = Number.isFinite(statusPolicy.intervalDays) && statusPolicy.intervalDays >= 0 ? statusPolicy.intervalDays : null;
-        console.log(`gc policy: age ${statusPolicy.ageDays ?? "-"}d · keep ${statusPolicy.keep ?? "-"} · auto ${statusPolicy.auto === true ? "yes" : "no"}${interval !== null ? ` · interval ${interval}d` : ""}`);
+        const ledgerBits =
+          ledgerPolicy && (Number.isFinite(ledgerPolicy.ageDays) || Number.isFinite(ledgerPolicy.keep))
+            ? ` · ledger age ${ledgerPolicy.ageDays ?? "-"}d / keep ${ledgerPolicy.keep ?? "-"}`
+            : "";
+        console.log(`gc policy: age ${statusPolicy.ageDays ?? "-"}d · keep ${statusPolicy.keep ?? "-"} · auto ${statusPolicy.auto === true ? "yes" : "no"}${interval !== null ? ` · interval ${interval}d` : ""}${ledgerBits}`);
         console.log(`last auto sweep: ${posture.lastRunMs ? new Date(posture.lastRunMs).toISOString() : "never"}`);
         console.log(posture.nextRunMs ? `next auto sweep allowed: ${new Date(posture.nextRunMs).toISOString()}` : "next auto sweep: anytime (no interval set)");
         console.log(`throttled now: ${posture.throttled ? "yes — the auto sweep is waiting for the interval" : "no"}`);
@@ -440,31 +471,46 @@ export function cmdTools(args = {}) {
     // Prune stale registry artifacts: agent report/dry-run files (by mtime)
     // and the audit ledger (by entry timestamp). --age N keeps only artifacts
     // younger than N days; --keep N keeps only the N most recent files/entries.
+    // --ledger-age N / --ledger-keep N override retention for the ledger only.
     // --dry-run previews everything without deleting; --json is machine
     // readable. Falls back to the project `gc` TTL policy (parasite-skill.json
-    // "gc": { "ageDays", "keep", "auto" }) when no CLI knobs are given.
+    // "gc": { "ageDays", "keep", "ledger", "auto" }) when no CLI knobs are
+    // given.
     const dryRun = args.dryRun === true;
     const ageDays = Number(args.age);
     const keep = Number(args.keep);
+    const ledgerAgeDays = Number(args.ledgerAge);
+    const ledgerKeep = Number(args.ledgerKeep);
     const cliAge = Number.isFinite(ageDays) && ageDays >= 0;
     const cliKeep = Number.isFinite(keep) && keep >= 0;
+    const cliLedgerAge = Number.isFinite(ledgerAgeDays) && ledgerAgeDays >= 0;
+    const cliLedgerKeep = Number.isFinite(ledgerKeep) && ledgerKeep >= 0;
     const policy = args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : null;
+    const ledgerPolicy = ledgerPolicyOf(policy);
     const policyAge = Number.isFinite(policy?.ageDays) && policy.ageDays >= 0;
     const policyKeep = Number.isFinite(policy?.keep) && policy.keep >= 0;
+    const policyLedgerAge = Number.isFinite(ledgerPolicy?.ageDays) && ledgerPolicy.ageDays >= 0;
+    const policyLedgerKeep = Number.isFinite(ledgerPolicy?.keep) && ledgerPolicy.keep >= 0;
     const byAge = cliAge || policyAge;
     const byKeep = cliKeep || policyKeep;
-    if (!byAge && !byKeep) {
-      console.error("tools gc requires --age N (days) and/or --keep N (count), or a project gc policy; add --dry-run to preview");
+    const byLedgerAge = cliLedgerAge || policyLedgerAge;
+    const byLedgerKeep = cliLedgerKeep || policyLedgerKeep;
+    if (!byAge && !byKeep && !byLedgerAge && !byLedgerKeep) {
+      console.error("tools gc requires --age N (days), --keep N (count), --ledger-age N, and/or --ledger-keep N, or a project gc policy; add --dry-run to preview");
       return 1;
     }
     const effAge = cliAge ? ageDays : policy?.ageDays;
     const effKeep = cliKeep ? keep : policy?.keep;
-    const source = cliAge || cliKeep ? (policyAge || policyKeep ? "cli + project gc policy" : "cli") : "project gc policy";
-    const { removed, totals } = planGc(reg, { ageDays: effAge, keep: effKeep, dryRun });
+    const effLedgerAge = cliLedgerAge ? ledgerAgeDays : ledgerPolicy?.ageDays;
+    const effLedgerKeep = cliLedgerKeep ? ledgerKeep : ledgerPolicy?.keep;
+    const anyCli = cliAge || cliKeep || cliLedgerAge || cliLedgerKeep;
+    const anyPolicy = policyAge || policyKeep || policyLedgerAge || policyLedgerKeep;
+    const source = anyCli ? (anyPolicy ? "cli + project gc policy" : "cli") : "project gc policy";
+    const { removed, totals } = planGc(reg, { ageDays: effAge, keep: effKeep, ledgerAgeDays: effLedgerAge, ledgerKeep: effLedgerKeep, dryRun });
     if (args.json) {
       console.log(JSON.stringify({ dry_run: dryRun, source, removed, totals }, null, 2));
     } else if (dryRun) {
-      console.log(`tools gc dry-run (${source}: ${byAge ? `age < ${effAge}d, ` : ""}${byKeep ? `keep ${effKeep} newest` : ""}):`);
+      console.log(`tools gc dry-run (${source}: ${byAge ? `age < ${effAge}d, ` : ""}${byKeep ? `keep ${effKeep} newest, ` : ""}${byLedgerAge ? `ledger age < ${effLedgerAge}d, ` : ""}${byLedgerKeep ? `ledger keep ${effLedgerKeep} newest` : ""}):`);
       if (!totals.agent_files && !totals.ledger_entries) console.log("  nothing to prune");
       for (const name of removed.agent_files) console.log(`  - agent report: ${name}`);
       if (removed.ledger_entries) console.log(`  - ledger: ${removed.ledger_entries} entries (${removed.ledger_bytes} bytes)`);

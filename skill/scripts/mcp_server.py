@@ -132,7 +132,7 @@ TOOLS = [
     {"name": "skill_tools_docs", "description": "Return a TOOLS.md-style reference of the callable skill AI-tool surface.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "skill_tools_run", "description": "Explicitly execute one skill AI-tool. Bounded, captured, and redacted; never runs automatically.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "args": {"type": "string"}, "timeout_ms": {"type": "number"}, "allow": {"type": "array", "items": {"type": "string"}}, "deny": {"type": "array", "items": {"type": "string"}}, "env": {"type": "array", "items": {"type": "string"}}}, "required": ["name"]}},
     {"name": "skill_tools_history", "description": "Read the tool-run audit ledger (tool-runs.jsonl) with filters: name/skill globs, status (ok|fail), since/until ISO timestamps, limit. Parity with the JS twin's `tools history`.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "skill": {"type": "string"}, "status": {"type": "string"}, "since": {"type": "string"}, "until": {"type": "string"}, "limit": {"type": "number"}}}},
-    {"name": "skill_tools_gc", "description": "Prune stale registry artifacts (agent reports + audit ledger) by age/keep, or report the gc posture. Parity with the JS twin's `tools gc` / `tools gc --status`.", "inputSchema": {"type": "object", "properties": {"status": {"type": "boolean", "description": "report policy + last/next sweep posture + stale dry-run without pruning"}, "age_days": {"type": "number"}, "keep": {"type": "number"}, "dry_run": {"type": "boolean"}}}},
+    {"name": "skill_tools_gc", "description": "Prune stale registry artifacts (agent reports + audit ledger) by age/keep, or report the gc posture. The audit ledger accepts its own retention (ledger_age_days/ledger_keep) overriding the shared knobs — parity with the JS twin's `tools gc` / `tools gc --status`.", "inputSchema": {"type": "object", "properties": {"status": {"type": "boolean", "description": "report policy + last/next sweep posture + stale dry-run without pruning"}, "age_days": {"type": "number"}, "keep": {"type": "number"}, "ledger_age_days": {"type": "number", "description": "independent ledger retention: drop entries older than N days (overrides age_days for the ledger only)"}, "ledger_keep": {"type": "number", "description": "independent ledger retention: keep only the newest N entries (overrides keep for the ledger only)"}, "dry_run": {"type": "boolean"}}}},
     {"name": "skill_tools_ledger", "description": "Audit-ledger lifecycle (tool-runs.jsonl): stats reports integrity + aggregates (valid/corrupt/out-of-order, ok/fail, by-skill/by-tool), export dumps the full ledger as a JSON array to a file, purge clears it. Parity with the JS twin's `tools ledger`.", "inputSchema": {"type": "object", "properties": {"stats": {"type": "boolean", "description": "integrity + aggregate stats (exits nonzero when corrupt lines exist)"}, "export": {"type": "string", "description": "dump the full ledger as a JSON array to this path"}, "purge": {"type": "boolean", "description": "clear the ledger entirely"}}}},
     {"name": "doctor", "description": "One-shot health check: registry loads, spec validation, callable-tool count, ledger integrity, freshness. Exits 1 on the first failing check.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "export", "description": "Python-twin ecosystem inventory (skills, sets, tools with risk, gc posture, ledger stats) from the shared registry. JS-only client/extension/MCP state is served by the JS twin. --public strips paths.", "inputSchema": {"type": "object", "properties": {"public": {"type": "boolean"}}}},
@@ -171,12 +171,20 @@ AUTO_GC_MARKER = "auto-gc.last.json"
 _DAY_MS = 86_400_000
 
 
-def _plan_gc(reg: Path, age_days=None, keep=None, dry_run: bool = False) -> dict:
+def _plan_gc(reg: Path, age_days=None, keep=None, ledger_age_days=None, ledger_keep=None, dry_run: bool = False) -> dict:
     """Mirror of the JS planGc: prune stale agent report files (by mtime) and
-    audit-ledger entries (by timestamp). Returns { removed, totals } and is
+    audit-ledger entries (by timestamp). Ledger retention can be set
+    independently of agent-report retention via the project `gc.ledger` policy
+    or the --ledger-age/--ledger-keep flags; when a ledger-specific knob is
+    absent it falls back to the shared age_days/keep, so existing policies keep
+    pruning the ledger exactly as before. Returns { removed, totals } and is
     side-effect-free when dry_run is True."""
     by_age = isinstance(age_days, (int, float)) and not isinstance(age_days, bool) and age_days >= 0
     by_keep = isinstance(keep, (int, float)) and not isinstance(keep, bool) and keep >= 0
+    by_ledger_age = isinstance(ledger_age_days, (int, float)) and not isinstance(ledger_age_days, bool) and ledger_age_days >= 0
+    by_ledger_keep = isinstance(ledger_keep, (int, float)) and not isinstance(ledger_keep, bool) and ledger_keep >= 0
+    ledger_age = ledger_age_days if by_ledger_age else age_days
+    ledger_keep_n = ledger_keep if by_ledger_keep else keep
     now_ms = time.time() * 1000
     removed = {"agent_files": [], "ledger_entries": 0, "ledger_bytes": 0}
     agents_dir = reg / "agents"
@@ -224,10 +232,10 @@ def _plan_gc(reg: Path, age_days=None, keep=None, dry_run: bool = False) -> dict
                 ts = 0
             parsed.append({"index": index, "ts": ts})
         kept = parsed
-        if by_age:
-            kept = [e for e in kept if now_ms - e["ts"] <= age_days * _DAY_MS]
-        if by_keep:
-            kept = kept[-int(keep):]
+        if by_age or by_ledger_age:
+            kept = [e for e in kept if now_ms - e["ts"] <= ledger_age * _DAY_MS]
+        if by_keep or by_ledger_keep:
+            kept = kept[-int(ledger_keep_n):]
         kept_idx = {e["index"] for e in kept}
         dropped = [i for i in range(len(lines)) if i not in kept_idx]
         removed["ledger_entries"] = len(dropped)
@@ -250,9 +258,14 @@ def _run_auto_gc(reg: Path) -> dict | None:
         policy = project_gc()
         if not policy or policy.get("auto") is not True:
             return None
+        ledger_policy = policy.get("ledger")
+        if not isinstance(ledger_policy, dict):
+            ledger_policy = None
         by_age = isinstance(policy.get("ageDays"), (int, float)) and not isinstance(policy.get("ageDays"), bool) and policy.get("ageDays") >= 0
         by_keep = isinstance(policy.get("keep"), (int, float)) and not isinstance(policy.get("keep"), bool) and policy.get("keep") >= 0
-        if not by_age and not by_keep:
+        by_ledger_age = bool(ledger_policy) and isinstance(ledger_policy.get("ageDays"), (int, float)) and not isinstance(ledger_policy.get("ageDays"), bool) and ledger_policy.get("ageDays") >= 0
+        by_ledger_keep = bool(ledger_policy) and isinstance(ledger_policy.get("keep"), (int, float)) and not isinstance(ledger_policy.get("keep"), bool) and ledger_policy.get("keep") >= 0
+        if not by_age and not by_keep and not by_ledger_age and not by_ledger_keep:
             return None
         now_ms = time.time() * 1000
         interval = policy.get("intervalDays")
@@ -268,7 +281,7 @@ def _run_auto_gc(reg: Path) -> dict | None:
                 days_ago = max(0, int((now_ms - last_run_ms) // _DAY_MS))
                 print(f"auto-gc: skipped (last sweep {days_ago}d ago; interval {interval}d)", file=sys.stderr)
                 return {"ran": False, "pruned": None, "throttled": True}
-        applied = _plan_gc(reg, policy.get("ageDays"), policy.get("keep"), dry_run=False)
+        applied = _plan_gc(reg, policy.get("ageDays"), policy.get("keep"), ledger_age_days=ledger_policy.get("ageDays") if by_ledger_age else None, ledger_keep=ledger_policy.get("keep") if by_ledger_keep else None, dry_run=False)
         try:
             marker_path.write_text(json.dumps({"lastRunMs": int(now_ms)}) + "\n", encoding="utf-8")
         except OSError:
@@ -714,12 +727,14 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         gc_block = None
         if gc_policy:
             posture = _gc_posture(reg, gc_policy)
-            dry = _plan_gc(reg, gc_policy.get("ageDays"), gc_policy.get("keep"), dry_run=True)
+            ledger_policy = gc_policy.get("ledger") if isinstance(gc_policy.get("ledger"), dict) else None
+            dry = _plan_gc(reg, gc_policy.get("ageDays"), gc_policy.get("keep"), ledger_age_days=ledger_policy.get("ageDays") if ledger_policy else None, ledger_keep=ledger_policy.get("keep") if ledger_policy else None, dry_run=True)
             gc_block = {
                 "age_days": gc_policy.get("ageDays") if isinstance(gc_policy.get("ageDays"), (int, float)) and not isinstance(gc_policy.get("ageDays"), bool) else None,
                 "keep": gc_policy.get("keep") if isinstance(gc_policy.get("keep"), (int, float)) and not isinstance(gc_policy.get("keep"), bool) else None,
                 "auto": gc_policy.get("auto") is True,
                 "interval_days": gc_policy.get("intervalDays") if isinstance(gc_policy.get("intervalDays"), (int, float)) and not isinstance(gc_policy.get("intervalDays"), bool) else None,
+                "ledger": ({"age_days": ledger_policy.get("ageDays") if isinstance(ledger_policy.get("ageDays"), (int, float)) and not isinstance(ledger_policy.get("ageDays"), bool) else None, "keep": ledger_policy.get("keep") if isinstance(ledger_policy.get("keep"), (int, float)) and not isinstance(ledger_policy.get("keep"), bool) else None} if ledger_policy else None),
                 "last_sweep_ms": posture["lastRunMs"],
                 "next_sweep_ms": posture["nextRunMs"],
                 "stale": dry["totals"],
@@ -943,6 +958,8 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         status_only = bool(params.get("status"))
         age_days = params.get("age_days")
         keep = params.get("keep")
+        ledger_age_days = params.get("ledger_age_days")
+        ledger_keep = params.get("ledger_keep")
         dry_run = bool(params.get("dry_run"))
         if status_only:
             # Fall back to the project gc policy knobs when none are passed
@@ -952,11 +969,15 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
                 age_days = policy.get("ageDays")
             if keep is None and policy is not None:
                 keep = policy.get("keep")
+            if ledger_age_days is None and policy is not None and isinstance(policy.get("ledger"), dict):
+                ledger_age_days = policy.get("ledger").get("ageDays")
+            if ledger_keep is None and policy is not None and isinstance(policy.get("ledger"), dict):
+                ledger_keep = policy.get("ledger").get("keep")
             posture = _gc_posture(reg, policy)
-            dry = _plan_gc(reg, age_days, keep, dry_run=True)
+            dry = _plan_gc(reg, age_days, keep, ledger_age_days=ledger_age_days, ledger_keep=ledger_keep, dry_run=True)
             print(json.dumps({"policy": policy or None, "last_sweep_ms": posture["lastRunMs"], "next_sweep_ms": posture["nextRunMs"], "throttled": posture["throttled"], "stale": dry["totals"]}, indent=2))
             return 0
-        applied = _plan_gc(reg, age_days, keep, dry_run=dry_run)
+        applied = _plan_gc(reg, age_days, keep, ledger_age_days=ledger_age_days, ledger_keep=ledger_keep, dry_run=dry_run)
         print(json.dumps({"removed": applied["removed"], "totals": applied["totals"], "dry_run": dry_run}, indent=2))
         return 0
 
@@ -1086,22 +1107,26 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         # waiting for the next interval — not a missed TTL sweep).
         auto = _run_auto_gc(reg)
         policy = project_gc()
+        ledger_policy = policy.get("ledger") if policy is not None and isinstance(policy.get("ledger"), dict) else None
         has_knob = bool(policy) and (
             (isinstance(policy.get("ageDays"), (int, float)) and not isinstance(policy.get("ageDays"), bool) and policy.get("ageDays") >= 0)
             or (isinstance(policy.get("keep"), (int, float)) and not isinstance(policy.get("keep"), bool) and policy.get("keep") >= 0)
+            or (ledger_policy is not None and isinstance(ledger_policy.get("ageDays"), (int, float)) and not isinstance(ledger_policy.get("ageDays"), bool) and ledger_policy.get("ageDays") >= 0)
+            or (ledger_policy is not None and isinstance(ledger_policy.get("keep"), (int, float)) and not isinstance(ledger_policy.get("keep"), bool) and ledger_policy.get("keep") >= 0)
         )
         if has_knob:
-            plan = _plan_gc(reg, policy.get("ageDays"), policy.get("keep"), dry_run=True)
+            plan = _plan_gc(reg, policy.get("ageDays"), policy.get("keep"), ledger_age_days=ledger_policy.get("ageDays") if ledger_policy else None, ledger_keep=ledger_policy.get("keep") if ledger_policy else None, dry_run=True)
             stale = plan["totals"]["agent_files"] + plan["totals"]["ledger_entries"]
             throttled = bool(auto and auto.get("throttled"))
             age_display = policy.get("ageDays") if policy.get("ageDays") is not None else "-"
             keep_display = policy.get("keep") if policy.get("keep") is not None else "-"
+            ledger_display = f" · ledger {ledger_policy.get('ageDays') if ledger_policy and ledger_policy.get('ageDays') is not None else '-'}d/{ledger_policy.get('keep') if ledger_policy and ledger_policy.get('keep') is not None else '-'}" if ledger_policy else ""
             if policy.get("auto") is True and stale and not throttled:
                 fail("gc", f"{stale} stale artifact(s) under the auto gc policy; run tools gc to clear")
             elif policy.get("auto") is True and stale and throttled:
                 ok("gc", f"{stale} stale artifact(s) under the auto gc policy (auto sweep throttled to once per {policy.get('intervalDays')}d)")
             elif stale:
-                ok("gc", f"{stale} stale artifact(s) under the gc policy (age {age_display}d, keep {keep_display}); run tools gc")
+                ok("gc", f"{stale} stale artifact(s) under the gc policy (age {age_display}d, keep {keep_display}{ledger_display}); run tools gc")
             else:
                 ok("gc", "no stale artifacts under the gc policy")
         else:

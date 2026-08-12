@@ -54,7 +54,11 @@ when any skill on disk is newer than it, `loadRegistry` re-scans automatically
 (`route` prints a one-line stderr note) so new and edited skills show up in
 routing/planning without a manual `scan --force`. The Python twin's
 `load_registry` does the same. Both `doctor` implementations report this
-freshness state as an informational check.
+freshness state as an informational check. Routing also understands
+hyphenated names: a two-word idea like "fresh skill" matches a skill literally
+named `fresh-skill` — the scanner keeps the hyphenated token and its split
+parts as keywords, and scoring matches the idea tokens against the expanded
+name (both twins, `-` and `_`).
 
 Project defaults live in `parasite-skill.json` or `.parasite-skill.json` and can define registry/scan paths, sets, enabled sets, exclusions, output limits, client allowlists, isolated environment keys, and the parasite toggle. `PARASITE_SKILL_HOME` isolates the complete runtime for tests or sandboxes.
 
@@ -107,6 +111,8 @@ parasite-skill tools ledger --export dump.json      # full ledger as a JSON arra
 parasite-skill tools ledger --purge                 # clear the ledger entirely
 parasite-skill tools gc --age 30 --dry-run          # preview pruning stale artifacts
 parasite-skill tools gc --keep 20                   # keep only the newest 20 reports/entries
+parasite-skill tools gc --ledger-age 30             # ledger-only retention (older entries expire)
+parasite-skill tools gc --ledger-keep 200           # ledger-only: keep the newest 200 entries
 parasite-skill tools gc --status --json             # policy + auto-sweep throttle posture
                                                    # (last/next sweep, stale dry-run, no pruning)
 ```
@@ -114,7 +120,12 @@ parasite-skill tools gc --status --json             # policy + auto-sweep thrott
 `tools gc` honors a project **GC TTL policy** when no CLI knobs are given — put
 `"gc": { "ageDays": 30, "keep": 20, "auto": true }` in `parasite-skill.json`
 and every `tools gc` (and `doctor`) uses it as the default, so scheduled
-cleanup can be expressed in config instead of remembering flags. When the
+cleanup can be expressed in config instead of remembering flags. The audit
+ledger gets its own retention sub-policy — `"gc": { "ledger": {"ageDays": 30,
+"keep": 200} }` — so old tool runs auto-expire independently of agent-report
+TTL: the ledger-only knobs override the shared `ageDays`/`keep` for
+`tool-runs.jsonl` only (the CLI equivalents are `--ledger-age N` /
+`--ledger-keep N`). When the
 policy declares `"auto": true` (safe to run unattended), the sweep also runs
 automatically at the `scan`, `export`, and `doctor` entry points — stale
 artifacts are pruned on the spot, so they never accumulate between manual
@@ -125,8 +136,8 @@ scan/export/doctor; a throttled sweep is reported on stderr as `auto-gc:
 skipped` and never fails `doctor`. `doctor` reports the policy posture as a
 check — and because it self-heals first, stale artifacts remaining *after* the
 auto sweep are a *failing* doctor check, so CI catches a genuinely stuck TTL
-sweep. `export` records the policy (including `intervalDays`) and the
-stale-artifact dry-run count in `ecosystem.json`.
+sweep. `export` records the policy (including `intervalDays` and the ledger
+sub-policy) and the stale-artifact dry-run count in `ecosystem.json`.
 
 `tools verify` checks every discovered tool (script exists, policy status,
 schema shape) and exits 1 when anything is broken — a cheap readiness gate
@@ -144,8 +155,12 @@ array (absolute or cwd-relative); `--purge` clears it. The Python twin
 mirrors this as the `skill_tools_ledger` MCP tool (stats/export/purge).
 `tools gc` prunes stale registry artifacts (agent report/dry-run files by
 mtime, ledger entries by timestamp) with `--age N` days and/or `--keep N`
-newest — `--dry-run` previews exactly what would be deleted, nothing is
-removed until you drop the flag.
+newest; `--ledger-age N`/`--ledger-keep N` override retention for the ledger
+only, so old tool runs can expire on a different schedule than agent reports.
+`--dry-run` previews exactly what would be deleted, nothing is removed until
+you drop the flag. Both the JS CLI and the Python twin's `skill_tools_gc`
+speak this surface (`ledger_age_days`/`ledger_keep`), and the Python twin's
+auto-gc sweep honors the `gc.ledger` sub-policy the same way.
 
 Skills can declare per-tool metadata in their `SKILL.md` frontmatter as a
 `tools:` JSON block keyed by tool name or asset path — overriding the
