@@ -561,7 +561,10 @@ describe("agents run --all", () => {
       expect(cmdAgentsRun({ registry, dirs, all: true, _: ["agents", "run", "--all", "debug", "failing", "tests"], maxTools: 2 })).toBe(0);
       expect(out.join("\n")).toContain("6 profiles");
       const reports = readdirSync(join(registry, "agents"));
-      const json = reports.find((name) => name.startsWith("all-"));
+      // readdir order is filesystem-dependent (Windows: creation order, Linux
+      // ext4: hash order), so never pick the first "all-*" entry — the
+      // human-readable .md report starts with "#" and would break JSON.parse.
+      const json = reports.find((name) => name.startsWith("all-") && name.endsWith(".json") && !name.endsWith(".dryrun.json"));
       const combined = JSON.parse(readFileSync(join(registry, "agents", json as string), "utf-8"));
       expect(combined.kind).toBe("parasite-skill-agent-run-all");
       expect(combined.reports.length).toBe(6);
@@ -1452,7 +1455,9 @@ describe("compose per-skill tools and agents strict", () => {
       expect(cmdAgentsRun({ registry, dirs, all: true, profiles: "ecosystem-architect,release-engineer", _: ["agents", "run", "--all", "debug", "failing", "tests"], maxTools: 2 })).toBe(0);
       expect(out.join("\n")).toContain("2 profiles");
       const reports = readdirSync(join(registry, "agents"));
-      const json = reports.find((name) => name.startsWith("all-"));
+      // Same readdir-order hazard as above: pick the combined JSON, never the
+      // "#"-leading .md report.
+      const json = reports.find((name) => name.startsWith("all-") && name.endsWith(".json") && !name.endsWith(".dryrun.json"));
       const combined = JSON.parse(readFileSync(join(registry, "agents", json as string), "utf-8"));
       expect(combined.profiles).toBe(2);
       const names = combined.reports.map((report: { profile: string }) => report.profile).sort();
