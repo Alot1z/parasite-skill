@@ -1,6 +1,6 @@
 {
   "name": "parasite-skill",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Local skill routing, bounded ecosystem graphing, and explicit client/MCP adapters for AI development tools.",
   "type": "module",
   "license": "MIT",
@@ -60,7 +60,7 @@
     "type": "git",
     "url": "git+https://github.com/Alot1z/parasite-skill.git"
   },
-  "author": "skill-router",
+  "author": "Alot1z <16801672+Alot1z@users.noreply.github.com>",
   "bugs": {
     "url": "https://github.com/Alot1z/parasite-skill/issues"
   },

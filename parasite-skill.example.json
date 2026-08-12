@@ -7,6 +7,14 @@
   "enabledSets": ["build", "review"],
   "excludeSkills": ["skill-i-never-want"],
   "route": { "top": 8, "minScore": 0 },
+  "gc": {
+    "_comment": "Artifact retention policy. auto sweeps stale agent reports + ledger entries at scan/export/doctor entry points, at most once per intervalDays. ageDays/keep prune agent artifacts; ledger gives the audit ledger its own independent schedule (falls back to ageDays/keep when absent). CLI knobs on tools gc always win.",
+    "auto": true,
+    "intervalDays": 7,
+    "ageDays": 90,
+    "keep": 100,
+    "ledger": { "ageDays": 30, "keep": 200 }
+  },
   "env": {
     "_comment": "Per-project env isolation: exposed as ctx.env and baked into generated parasite hooks/wrappers. Never mutates your shell. Values are never exported (key names only).",
     "GSM_API_URL": "http://localhost:3000"

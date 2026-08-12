@@ -4,6 +4,8 @@
 
 It also provides opt-in adapters for supported client configuration files, MCP registration, generated build hooks, and server wrappers. It does not bypass permissions or inject code into arbitrary closed-source applications.
 
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
+
 ## Install
 
 ```bash
