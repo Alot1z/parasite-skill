@@ -101,12 +101,18 @@ prunes stale agent reports and ledger entries by age (`--age N` days) or count
 (`--keep N` newest), with `--dry-run` previewing deletions; a project `gc` TTL
 policy (`parasite-skill.json` `"gc": { "ageDays", "keep", "auto", "intervalDays" }`)
 becomes the default when no CLI knobs are given, and `doctor` reports the
-policy posture. With `"auto": true` the sweep is also applied automatically at
-the `scan`, `export`, and `doctor` entry points, so stale artifacts never
-accumulate between manual runs; `"intervalDays": N` throttles that sweep to
-at most once per N days via a timestamped marker in the registry (shared by
-both twins), and a throttled sweep never fails `doctor` — only stale artifacts
-surviving an *executed* auto sweep do. `doctor` runs the same gates as CI in one
+policy posture. `tools gc --status` prints the policy plus the auto-sweep
+throttle posture (last/next sweep, stale dry-run) without pruning. With
+`"auto": true` the sweep is also applied automatically at the `scan`,
+`export`, and `doctor` entry points, so stale artifacts never accumulate
+between manual runs; `"intervalDays": N` throttles that sweep to at most once
+per N days via a timestamped marker in the registry (shared by both twins),
+and a throttled sweep never fails `doctor` — only stale artifacts surviving an
+*executed* auto sweep do. The Python twin mirrors all of this: its
+`skill_tools_run` writes the same `tool-runs.jsonl` audit ledger the JS twin
+uses, and `skill_tools_history` reads it with the same filters as
+`tools history`, so `trace` and gc ledger pruning work in python-only
+environments too. `doctor` runs the same gates as CI in one
 command: spec validation,
 tool readiness, audit baseline, and project-config parse — and is also exposed
 to MCP hosts as a `doctor` tool in both twins. `export` includes a `tools`

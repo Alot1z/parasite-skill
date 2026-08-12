@@ -100,6 +100,8 @@ TOOLS FLAGS
   --age N          tools gc: prune agent reports/ledger entries older than N days
   --keep N         tools gc: keep only the N most recent agent reports/ledger entries
                    (falls back to the project gc policy in parasite-skill.json)
+  --status         tools gc: report gc policy + auto-sweep throttle posture
+                   (last/next sweep, stale dry-run) without pruning anything
   --strict         agents run: exit 2 if any selected tool is policy-blocked
   --baseline       tools audit: diff against the persisted risk baseline
   --write-baseline tools audit: seed the risk baseline file
@@ -409,6 +411,7 @@ export function parseFlags(argv) {
       case "--limit": { const v = value(++i, a); if (v !== undefined) flags.limit = num(v); break; }
       case "--age": { const v = value(++i, a); if (v !== undefined) flags.age = num(v); break; }
       case "--keep": { const v = value(++i, a); if (v !== undefined) flags.keep = num(v); break; }
+      case "--status": flags.status = true; break;
       case "--env-filter": { const v = value(++i, a); if (v !== undefined) flags.envFilter = v; break; }
       case "--no-tools": flags.noTools = true; break;
       case "--max-tool-calls": { const v = value(++i, a); if (v !== undefined) flags.maxToolCalls = num(v); break; }

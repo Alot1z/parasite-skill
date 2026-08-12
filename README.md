@@ -93,6 +93,8 @@ parasite-skill tools history --since 2026-01-01T00:00:00Z --until 2026-02-01T00:
 parasite-skill tools history --clear                # reset the ledger
 parasite-skill tools gc --age 30 --dry-run          # preview pruning stale artifacts
 parasite-skill tools gc --keep 20                   # keep only the newest 20 reports/entries
+parasite-skill tools gc --status --json             # policy + auto-sweep throttle posture
+                                                   # (last/next sweep, stale dry-run, no pruning)
 ```
 
 `tools gc` honors a project **GC TTL policy** when no CLI knobs are given — put

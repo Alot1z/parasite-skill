@@ -57,14 +57,30 @@ describe("mcp-register runtime + entry", () => {
 });
 
 describe("graph command", () => {
+  // Isolate the graph from the machine's real registry: point it at a temp
+  // home with two related skills so the command is deterministic everywhere
+  // and a relatedness edge is guaranteed (identical descriptions => jaccard 1).
+  function tempGraphSkill() {
+    const base = join(tmpdir(), `sr-graph-${Date.now()}`);
+    const dirs = join(base, "skills");
+    const registry = join(base, "registry");
+    for (const name of ["demo-skill", "api-skill"]) {
+      mkdirSync(join(dirs, name, "scripts"), { recursive: true });
+      writeFileSync(join(dirs, name, "SKILL.md"), "---\nname: " + name + "\ndescription: Build APIs with python.\n---\n");
+      writeFileSync(join(dirs, name, "scripts", "hello.py"), 'print("hi")\n');
+    }
+    return { dirs, registry };
+  }
+
   test("emits DOT with nodes and edges", () => {
+    const { dirs, registry } = tempGraphSkill();
     const out = [];
     const origLog = console.log;
     console.log = (...a) => out.push(a.join(" "));
     const origErr = console.error;
     console.error = () => {};
     try {
-      const code = cmdGraph({ top: 5, dot: true });
+      const code = cmdGraph({ top: 5, dot: true, dirs, registry });
       expect(code).toBe(0);
       const text = out.join("\n");
       expect(text).toContain("digraph skills");
@@ -76,13 +92,14 @@ describe("graph command", () => {
   });
 
   test("emits Mermaid flowchart", () => {
+    const { dirs, registry } = tempGraphSkill();
     const out = [];
     const origLog = console.log;
     console.log = (...a) => out.push(a.join(" "));
     const origErr = console.error;
     console.error = () => {};
     try {
-      const code = cmdGraph({ top: 3, mmd: true });
+      const code = cmdGraph({ top: 3, mmd: true, dirs, registry });
       expect(code).toBe(0);
       expect(out.join("\n")).toContain("flowchart LR");
     } finally {

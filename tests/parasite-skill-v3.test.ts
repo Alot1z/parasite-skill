@@ -7,11 +7,19 @@ import { banner, LOGO, smallLogo } from "../src/logo.js";
 
 describe("logo (multicolor gradient)", () => {
   test("wordmark renders with truecolor gradient codes", () => {
-    const b = banner();
-    expect(b).toContain("PARASITE");
-    expect(b).toContain("SKILL");
-    // Gradient should emit 24-bit color codes (indigo/cyan/teal stops).
-    expect(b).toContain("38;2");
+    // Force color so the gradient path is deterministic on non-TTY runners.
+    const prev = process.env.FORCE_COLOR;
+    process.env.FORCE_COLOR = "1";
+    try {
+      const b = banner();
+      expect(b).toContain("PARASITE");
+      expect(b).toContain("SKILL");
+      // Gradient should emit 24-bit color codes (indigo/cyan/teal stops).
+      expect(b).toContain("38;2");
+    } finally {
+      if (prev === undefined) delete process.env.FORCE_COLOR;
+      else process.env.FORCE_COLOR = prev;
+    }
   });
 
   test("LOGO contains the parasite skill hub motif", () => {

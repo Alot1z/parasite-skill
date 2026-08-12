@@ -17,7 +17,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -130,6 +130,7 @@ TOOLS = [
     {"name": "skill_tools_audit", "description": "Static risk audit of discovered skill AI-tools (eval/subprocess/network/secrets patterns). Never executes anything.", "inputSchema": {"type": "object", "properties": {"threshold": {"type": "string"}}}},
     {"name": "skill_tools_docs", "description": "Return a TOOLS.md-style reference of the callable skill AI-tool surface.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "skill_tools_run", "description": "Explicitly execute one skill AI-tool. Bounded, captured, and redacted; never runs automatically.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "args": {"type": "string"}, "timeout_ms": {"type": "number"}, "allow": {"type": "array", "items": {"type": "string"}}, "deny": {"type": "array", "items": {"type": "string"}}, "env": {"type": "array", "items": {"type": "string"}}}, "required": ["name"]}},
+    {"name": "skill_tools_history", "description": "Read the tool-run audit ledger (tool-runs.jsonl) with filters: name/skill globs, status (ok|fail), since/until ISO timestamps, limit. Parity with the JS twin's `tools history`.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "skill": {"type": "string"}, "status": {"type": "string"}, "since": {"type": "string"}, "until": {"type": "string"}, "limit": {"type": "number"}}}},
     {"name": "doctor", "description": "One-shot health check: registry loads, spec validation, callable-tool count. Exits 1 on the first failing check.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "export", "description": "Python-twin ecosystem inventory (skills, sets, tools with risk) from the shared registry. JS-only client/extension/MCP state is served by the JS twin. --public strips paths.", "inputSchema": {"type": "object", "properties": {"public": {"type": "boolean"}}}},
     {"name": "llm", "description": "One bounded completion against an explicitly configured OpenAI-compatible endpoint. Local-only by default; allow_remote permits HTTPS. Skill tools exposed as native functions with risk annotations; tool calls are reported as previews (execution via skill_tools_run / JS twin).", "inputSchema": {"type": "object", "properties": {"request": {"type": "string"}, "endpoint": {"type": "string"}, "model": {"type": "string"}, "allow_remote": {"type": "boolean"}, "max_output_tokens": {"type": "number"}, "max_response_chars": {"type": "number"}, "no_tools": {"type": "boolean"}}, "required": ["request"]}},
@@ -638,6 +639,50 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         print(json.dumps({"ok": True, "response": str(message.get("content") or "")[:max_chars]}, indent=2))
         return 0
 
+    def do_skill_tools_history():
+        # Read the shared tool-run audit ledger (written by both twins) with
+        # the same filters as the JS twin's `tools history`: name/skill globs,
+        # status (ok|fail), since/until ISO timestamps, and a limit. Newest
+        # first, like the JS twin.
+        ledger_path = reg / "tool-runs.jsonl"
+        if not ledger_path.exists():
+            print(json.dumps({"count": 0, "entries": []}, indent=2))
+            return 0
+        try:
+            raw = [ln for ln in ledger_path.read_text(encoding="utf-8", errors="replace").split("\n") if ln]
+        except OSError:
+            raw = []
+        entries = []
+        for line in raw:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict):
+                entries.append(entry)
+        entries.reverse()
+        name_glob = str(params.get("name") or "").lower()
+        if name_glob:
+            entries = [e for e in entries if fnmatch.fnmatch(str(e.get("name", "")).lower(), name_glob)]
+        skill_glob = str(params.get("skill") or "").lower()
+        if skill_glob:
+            entries = [e for e in entries if fnmatch.fnmatch(str(e.get("skill", "")).lower(), skill_glob)]
+        status_filter = str(params.get("status") or "")
+        if status_filter == "ok":
+            entries = [e for e in entries if e.get("status") == 0]
+        elif status_filter == "fail":
+            entries = [e for e in entries if e.get("status") != 0]
+        since = str(params.get("since") or "")
+        until = str(params.get("until") or "")
+        if since:
+            entries = [e for e in entries if str(e.get("ts", "")) >= since]
+        if until:
+            entries = [e for e in entries if str(e.get("ts", "")) <= until]
+        limit = min(max(int(params.get("limit") or 50), 1), 5000)
+        entries = entries[:limit]
+        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        return 0
+
     def do_skill_tools_docs():
         # Parity with the JS twin: a TOOLS.md-style reference from the shared
         # registry. Only metadata; nothing is executed.
@@ -730,6 +775,30 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
             "stdout": _redact(str(stdout))[:200000],
             "stderr": _redact(str(stderr))[:200000],
         }
+        # Audit-ledger parity with the JS twin: record every executed tool run
+        # (registry/tool-runs.jsonl, same schema) so `trace` and gc ledger
+        # pruning work in python-only environments too. Best-effort, capped.
+        try:
+            ledger_path = reg / "tool-runs.jsonl"
+            ledger_line = json.dumps(
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                    "name": name,
+                    "skill": tool["skill"],
+                    "status": status,
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                    "args": str(tool_args)[:500],
+                    "stdout_chars": len(str(stdout)),
+                    "stderr_chars": len(str(stderr)),
+                }
+            )
+            with open(ledger_path, "a", encoding="utf-8") as lf:
+                lf.write(ledger_line + "\n")
+            all_lines = [ln for ln in ledger_path.read_text(encoding="utf-8", errors="replace").split("\n") if ln]
+            if len(all_lines) > 5000:
+                ledger_path.write_text("\n".join(all_lines[-5000:]) + "\n", encoding="utf-8")
+        except OSError:
+            pass
         print(json.dumps(result, indent=2))
         return 0 if status == 0 else 1
 
@@ -824,6 +893,7 @@ def run_tool(name: str, params: dict) -> tuple[str, int]:
         "skill_tools_list": do_skill_tools_list,
         "skill_tools_audit": do_skill_tools_audit,
         "skill_tools_docs": do_skill_tools_docs,
+        "skill_tools_history": do_skill_tools_history,
         "skill_tools_run": do_skill_tools_run,
         "doctor": do_doctor,
         "export": do_export,

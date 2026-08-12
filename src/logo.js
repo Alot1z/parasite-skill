@@ -24,7 +24,10 @@ const HUB = [
 const TAGLINE = "parasite-skill — inject, enhance, and route agent skills";
 
 // Truecolor support: COLORTERM=truecolor or TERM contains 'truecolor'/'24bit'.
+// FORCE_COLOR=1 forces color on (CI/tests); NO_COLOR (any value) disables it.
 function supportsTruecolor() {
+  if (process.env.NO_COLOR !== undefined) return false;
+  if (process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== "0") return true;
   const ct = process.env.COLORTERM ?? "";
   const term = process.env.TERM ?? "";
   if (/truecolor|24bit/.test(ct) || /truecolor|24bit/.test(term)) return true;

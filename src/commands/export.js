@@ -16,7 +16,7 @@ import { AGENT_PROFILES } from "../data/agent-profiles.js";
 import { buildEcosystemGraph, publicGraph } from "../ecosystem-graph.js";
 import { auditSkillTools, listSkillTools } from "../ai-tools.js";
 import { syncState } from "./sync.js";
-import { planGc, runAutoGc } from "./tools.js";
+import { gcMarkerPosture, planGc, runAutoGc } from "./tools.js";
 import { fmt } from "./_lib.js";
 
 // Rule/config files checked for existence only (no contents).
@@ -54,6 +54,10 @@ function listDirMd(p) {
 export function cmdExport(args) {
   const reg = registryDir(args.registry);
   const payload = loadRegistry(reg, args.dirs, args.force);
+  // Scheduled GC first: honor the project gc TTL policy (auto: true) so the
+  // inventory records post-gc posture — the stale dry-run count reflects what
+  // the sweep just cleared, and the throttle marker is present.
+  runAutoGc(reg, args);
   const skills = payload.skills;
   const sets = loadSetsWithProject(reg, args.sets);
   const home = homedir();
@@ -155,12 +159,15 @@ export function cmdExport(args) {
       : project?.gc && typeof project.gc === "object" && !Array.isArray(project.gc)
         ? project.gc
         : null;
+  const gcPosture = gcPolicy ? gcMarkerPosture(reg, gcPolicy) : null;
   const gc = gcPolicy
     ? {
         age_days: typeof gcPolicy.ageDays === "number" ? gcPolicy.ageDays : null,
         keep: typeof gcPolicy.keep === "number" ? gcPolicy.keep : null,
         auto: gcPolicy.auto === true,
         interval_days: typeof gcPolicy.intervalDays === "number" ? gcPolicy.intervalDays : null,
+        last_sweep_ms: gcPosture?.lastRunMs ?? null,
+        next_sweep_ms: gcPosture?.nextRunMs ?? null,
         stale: planGc(reg, { ageDays: gcPolicy.ageDays, keep: gcPolicy.keep, dryRun: true }).totals,
       }
     : null;
@@ -303,6 +310,7 @@ export function cmdExport(args) {
   md.push("## GC TTL Policy & Sync Posture", "");
   if (gc) {
     md.push(`- gc policy: age ${gc.age_days ?? "-"}d · keep ${gc.keep ?? "-"} · auto ${gc.auto ? "yes" : "no"}${gc.interval_days != null ? ` · interval ${gc.interval_days}d` : ""}`);
+    md.push(`- last auto sweep: ${gc.last_sweep_ms ? new Date(gc.last_sweep_ms).toISOString() : "never"} · next allowed: ${gc.next_sweep_ms ? new Date(gc.next_sweep_ms).toISOString() : "anytime"}`);
     md.push(`- stale artifacts (dry-run): ${gc.stale.agent_files} report(s) + ${gc.stale.ledger_entries} ledger entrie(s)`);
   } else {
     md.push("- gc policy: none configured (parasite-skill.json \"gc\": { ageDays, keep, auto })");
@@ -346,9 +354,6 @@ export function cmdExport(args) {
   if (!globalRules.length && !perClientRules.length && !projectInfo) md.push("None found.", "");
 
   writeFileSync(join(reg, "ECOSYSTEM.md"), md.join("\n"));
-  // Scheduled GC: honor the project gc TTL policy (auto: true) so the export
-  // leaves the registry tidy, not just reports on its staleness.
-  runAutoGc(reg, args);
   if (args.json) {
     // Machine view for MCP/CI: the full LLM-ready inventory.
     console.log(JSON.stringify(llm, null, 2));

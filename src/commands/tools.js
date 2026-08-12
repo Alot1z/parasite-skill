@@ -14,6 +14,8 @@
 //  tools gc [--age N] [--keep N]    prune stale registry artifacts (agent
 //                                   reports/dry-runs, oversized ledger);
 //                                   --dry-run previews without deleting
+//  tools gc --status [--json]        report the gc policy + auto-sweep throttle
+//                                   posture (last/next sweep) without pruning
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { loadProjectConfig, loadRegistry, registryDir } from "../engine.js";
@@ -114,6 +116,29 @@ export function planGc(reg, { ageDays, keep, dryRun = false } = {}) {
 export const AUTO_GC_MARKER = "auto-gc.last.json";
 
 /**
+ * Read the auto-sweep throttle posture from the shared marker file. Returns
+ * { lastRunMs, nextRunMs, throttled }: lastRunMs is the last executed sweep
+ * (or null when the runner never ran), nextRunMs the earliest allowed time for
+ * the next sweep under the policy's intervalDays (or null when no interval is
+ * set), and throttled whether a sweep right now would be skipped. Shared by
+ * `tools gc --status`, the doctor posture check, and runAutoGc itself.
+ */
+export function gcMarkerPosture(reg, policy) {
+  const interval =
+    policy && Number.isFinite(policy.intervalDays) && policy.intervalDays >= 0 ? policy.intervalDays : null;
+  let lastRunMs = 0;
+  try {
+    lastRunMs = Number(JSON.parse(readFileSync(join(reg, AUTO_GC_MARKER), "utf-8")).lastRunMs) || 0;
+  } catch {
+    lastRunMs = 0;
+  }
+  const now = Date.now();
+  const dayMs = 86_400_000;
+  const nextRunMs = interval !== null && lastRunMs > 0 ? lastRunMs + interval * dayMs : null;
+  return { lastRunMs: lastRunMs || null, nextRunMs, throttled: nextRunMs !== null && now < nextRunMs };
+}
+
+/**
  * Scheduled GC runner: when the project gc TTL policy declares `auto: true`,
  * apply the sweep right now so stale registry artifacts never accumulate
  * between manual `tools gc` runs. Best-effort: prints a one-line note to
@@ -141,15 +166,9 @@ export function runAutoGc(reg, args = {}) {
     const interval =
       Number.isFinite(effective.intervalDays) && effective.intervalDays >= 0 ? effective.intervalDays : null;
     if (interval !== null) {
-      const markerPath = join(reg, AUTO_GC_MARKER);
-      let lastRunMs = 0;
-      try {
-        lastRunMs = Number(JSON.parse(readFileSync(markerPath, "utf-8")).lastRunMs) || 0;
-      } catch {
-        lastRunMs = 0;
-      }
-      if (lastRunMs > 0 && now - lastRunMs < interval * dayMs) {
-        const daysAgo = Math.max(0, Math.floor((now - lastRunMs) / dayMs));
+      const posture = gcMarkerPosture(reg, effective);
+      if (posture.lastRunMs !== null && posture.throttled) {
+        const daysAgo = Math.max(0, Math.floor((now - posture.lastRunMs) / dayMs));
         console.error(`auto-gc: skipped (last sweep ${daysAgo}d ago; interval ${interval}d)`);
         return { ran: false, pruned: null, throttled: true };
       }
@@ -375,6 +394,47 @@ export function cmdTools(args = {}) {
   }
 
   if (sub === "gc") {
+    // --status is a pure inspection mode: report the gc policy and the
+    // auto-sweep throttle posture (marker last/next sweep, whether a sweep
+    // right now would be skipped) plus a stale-artifact dry-run. No pruning.
+    if (args.status === true) {
+      const statusPolicy =
+        args.gc && typeof args.gc === "object" && !Array.isArray(args.gc) ? args.gc : loadProjectConfig()?.gc ?? null;
+      const posture = gcMarkerPosture(reg, statusPolicy);
+      const hasKnob =
+        !!statusPolicy &&
+        ((Number.isFinite(statusPolicy.ageDays) && statusPolicy.ageDays >= 0) || (Number.isFinite(statusPolicy.keep) && statusPolicy.keep >= 0));
+      const stale = hasKnob
+        ? planGc(reg, { ageDays: statusPolicy?.ageDays, keep: statusPolicy?.keep, dryRun: true }).totals
+        : { agent_files: 0, ledger_entries: 0 };
+      if (args.json) {
+        console.log(
+          JSON.stringify(
+            {
+              policy: statusPolicy
+                ? { ageDays: statusPolicy.ageDays, keep: statusPolicy.keep, auto: statusPolicy.auto === true, intervalDays: statusPolicy.intervalDays }
+                : null,
+              last_sweep_ms: posture.lastRunMs,
+              next_sweep_ms: posture.nextRunMs,
+              throttled_now: posture.throttled,
+              stale,
+            },
+            null,
+            2,
+          ),
+        );
+      } else if (!statusPolicy) {
+        console.log('gc: no project gc policy configured (parasite-skill.json "gc": { ageDays, keep, auto, intervalDays })');
+      } else {
+        const interval = Number.isFinite(statusPolicy.intervalDays) && statusPolicy.intervalDays >= 0 ? statusPolicy.intervalDays : null;
+        console.log(`gc policy: age ${statusPolicy.ageDays ?? "-"}d · keep ${statusPolicy.keep ?? "-"} · auto ${statusPolicy.auto === true ? "yes" : "no"}${interval !== null ? ` · interval ${interval}d` : ""}`);
+        console.log(`last auto sweep: ${posture.lastRunMs ? new Date(posture.lastRunMs).toISOString() : "never"}`);
+        console.log(posture.nextRunMs ? `next auto sweep allowed: ${new Date(posture.nextRunMs).toISOString()}` : "next auto sweep: anytime (no interval set)");
+        console.log(`throttled now: ${posture.throttled ? "yes — the auto sweep is waiting for the interval" : "no"}`);
+        console.log(`stale artifacts (dry-run): ${stale.agent_files} report(s) + ${stale.ledger_entries} ledger entrie(s)`);
+      }
+      return 0;
+    }
     // Prune stale registry artifacts: agent report/dry-run files (by mtime)
     // and the audit ledger (by entry timestamp). --age N keeps only artifacts
     // younger than N days; --keep N keeps only the N most recent files/entries.

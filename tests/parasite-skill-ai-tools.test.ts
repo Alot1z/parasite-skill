@@ -1,6 +1,6 @@
 import { describe, expect, test, afterEach } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync, utimesSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scan, composePayload, mergeConfig } from "../src/engine.js";
@@ -48,6 +48,28 @@ afterEach(() => {
 });
 
 const PY = process.env.PARASITE_SKILL_PYTHON || (process.platform === "win32" ? "python" : "python3");
+
+// Seed an audit ledger with old (2020) timestamps so gc pruning is
+// deterministic on every platform. Freshly-written entries can land in the
+// same millisecond as the sweep's clock (now - ts === 0), which made the
+// age-0 prune assertions flaky on fast CI runners. Module scope: shared by
+// the gc-policy and scheduled-auto-gc describes.
+function seedLedger(registry: string, count = 2) {
+  mkdirSync(registry, { recursive: true });
+  const lines = Array.from({ length: count }, () =>
+    JSON.stringify({
+      ts: "2020-01-01T00:00:00.000Z",
+      name: "demo-skill__hello",
+      skill: "demo-skill",
+      status: 0,
+      duration_ms: 1,
+      args: "",
+      stdout_chars: 2,
+      stderr_chars: 0,
+    }),
+  ).join("\n");
+  writeFileSync(join(registry, "tool-runs.jsonl"), lines + "\n", "utf-8");
+}
 
 describe("AI-tools discovery and execution", () => {
   test("discovers python/js/shell tools and skips non-runnable assets", () => {
@@ -1871,9 +1893,7 @@ describe("gc TTL policy, sync posture, risk layers", () => {
     const agentsDir = join(registry, "agents");
     mkdirSync(agentsDir, { recursive: true });
     writeFileSync(join(agentsDir, "stale-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
-    const payload = scan([dirs]);
-    runSkillTool(payload, "demo-skill__hello", "", { registry });
-    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    seedLedger(registry, 2);
     const orig = console.log;
     const out: string[] = [];
     console.log = (...a) => out.push(a.join(" "));
@@ -1921,8 +1941,7 @@ describe("gc TTL policy, sync posture, risk layers", () => {
       "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
       "demo-skill/scripts/hello.py": 'print("hi")\n',
     });
-    const payload = scan([dirs]);
-    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    seedLedger(registry, 1);
     const plan = planGc(registry, { ageDays: 0, dryRun: true });
     expect(plan.totals.ledger_entries).toBe(1);
     expect(readToolRuns(registry).length).toBe(1); // nothing deleted
@@ -2005,6 +2024,10 @@ describe("gc TTL policy, sync posture, risk layers", () => {
       expect(parsed.gc.interval_days).toBe(5);
       expect(parsed.gc.auto).toBe(true);
       expect(parsed.gc.stale.agent_files).toBe(0);
+      // The auto sweep ran during export (auto: true), so the throttle posture
+      // is recorded: last sweep happened, next is at least one interval later.
+      expect(typeof parsed.gc.last_sweep_ms).toBe("number");
+      expect(parsed.gc.next_sweep_ms).toBeGreaterThan(parsed.gc.last_sweep_ms as number);
       expect(parsed.sync.repo).toBe(false);
       // The saved file carries the same posture.
       const eco = JSON.parse(readFileSync(join(registry, "ecosystem.json"), "utf-8"));
@@ -2129,9 +2152,7 @@ describe("scheduled auto-gc runner", () => {
     writeFileSync(join(agentsDir, "stale-report.json"), JSON.stringify({ kind: "parasite-skill-agent-run" }));
     const oldStamp = new Date("2020-01-01T00:00:00Z");
     utimesSync(join(agentsDir, "stale-report.json"), oldStamp, oldStamp);
-    const payload = scan([dirs]);
-    runSkillTool(payload, "demo-skill__hello", "", { registry });
-    runSkillTool(payload, "demo-skill__hello", "", { registry });
+    seedLedger(registry, 2);
     return { agentsDir };
   }
 
@@ -2281,7 +2302,8 @@ describe("scheduled auto-gc runner", () => {
     try {
       expect(cmdDoctor({ registry, dirs, gc: { ageDays: 30, auto: true, intervalDays: 5 } })).toBe(0);
       expect(existsSync(join(agentsDir, "stale-report.json"))).toBe(true);
-      expect(out.join("\n")).toContain("[ok] gc — 1 stale artifact(s) under the auto gc policy (auto sweep throttled to once per 5d)");
+      // 1 agent report + 2 seeded ledger entries = 3 stale artifacts.
+      expect(out.join("\n")).toContain("[ok] gc — 3 stale artifact(s) under the auto gc policy (auto sweep throttled to once per 5d)");
     } finally {
       console.log = orig;
     }
@@ -2339,5 +2361,100 @@ describe("scheduled auto-gc runner", () => {
     // Second doctor: interval-throttled (file stays) but still exit 0.
     expect(lines[1]).toContain("0 True");
     expect(lines[1]).toContain("auto sweep throttled to once per 5d");
+  });
+
+  test("tools gc --status reports policy + sweep throttle posture", () => {
+    const { dirs, registry } = tempSkills({
+      "demo-skill/SKILL.md": "---\nname: demo-skill\ndescription: Debug failing tests.\n---\n",
+      "demo-skill/scripts/hello.py": 'print("hi")\n',
+    });
+    const orig = console.log;
+    const out: string[] = [];
+    console.log = (...a) => out.push(a.join(" "));
+    try {
+      // Text view: policy + posture without pruning anything.
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", status: true, gc: { ageDays: 30, auto: true, intervalDays: 5 } })).toBe(0);
+      const text = out.join("\n");
+      expect(text).toContain("gc policy: age 30d");
+      expect(text).toContain("auto yes");
+      expect(text).toContain("interval 5d");
+      expect(text).toContain("last auto sweep: never");
+      expect(text).toContain("next auto sweep: anytime");
+      // --json machine view carries the posture fields.
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", status: true, json: true, gc: { ageDays: 30, intervalDays: 5 } })).toBe(0);
+      const parsed = JSON.parse(out.join("\n"));
+      expect(parsed.policy.intervalDays).toBe(5);
+      expect(parsed.last_sweep_ms).toBeNull();
+      expect(parsed.throttled_now).toBe(false);
+      expect(parsed.stale.agent_files).toBe(0);
+      // Without a policy it reports the absence, not an error.
+      out.length = 0;
+      expect(cmdTools({ registry, dirs, toolsAction: "gc", status: true })).toBe(0);
+      expect(out.join("\n")).toContain("no project gc policy configured");
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test("python twin skill_tools_history reads the shared ledger with filters", () => {
+    const base = join(tmpdir(), `sr-py-history-${Date.now()}`);
+    bases.push(base);
+    const regDir = join(base, ".agents", "skills", ".parasite-skill");
+    mkdirSync(regDir, { recursive: true });
+    // Seed a ledger the python twin can read (same schema both twins write).
+    const lines = [
+      JSON.stringify({ ts: "2026-08-01T00:00:00.000Z", name: "alpha__run", skill: "alpha-skill", status: 0, duration_ms: 5, stdout_chars: 3, stderr_chars: 0 }),
+      JSON.stringify({ ts: "2026-08-02T00:00:00.000Z", name: "beta__run", skill: "beta-skill", status: 1, duration_ms: 9, stdout_chars: 0, stderr_chars: 4 }),
+      JSON.stringify({ ts: "2026-08-03T00:00:00.000Z", name: "alpha__run", skill: "alpha-skill", status: 0, duration_ms: 6, stdout_chars: 2, stderr_chars: 0 }),
+    ].join("\n");
+    writeFileSync(join(regDir, "tool-runs.jsonl"), lines + "\n", "utf-8");
+    const pyCode = [
+      "import json, os, sys",
+      "os.environ['PARASITE_SKILL_HOME'] = " + JSON.stringify(base),
+      "sys.path.insert(0, " + JSON.stringify(join(process.cwd(), "skill", "scripts")) + ")",
+      "import mcp_server",
+      "print('skill_tools_history' in [t['name'] for t in mcp_server.TOOLS])",
+      "text, code = mcp_server.run_tool('skill_tools_history', {'name': 'alpha*'})",
+      "data = json.loads(text)",
+      "print(code, data['count'], [e['name'] for e in data['entries']])",
+      "text2, _ = mcp_server.run_tool('skill_tools_history', {'status': 'fail'})",
+      "data2 = json.loads(text2)",
+      "print(data2['count'], [e['name'] for e in data2['entries']])",
+    ].join("; ");
+    const out = execFileSync(PY, ["-c", pyCode], { encoding: "utf8" }).trim().split("\n");
+    expect(out[0].trim()).toBe("True");
+    expect(out[1]).toContain("0 2");
+    expect(out[1]).toContain("alpha__run");
+    expect(out[2]).toContain("1");
+    expect(out[2]).toContain("beta__run");
+  });
+
+  test("CI gate mirror: the real CLI doctor sweeps under an auto policy and throttles", () => {
+    const base = join(tmpdir(), `sr-ci-gate-${Date.now()}`);
+    bases.push(base);
+    const regAgents = join(base, ".agents", "skills", ".parasite-skill", "agents");
+    mkdirSync(regAgents, { recursive: true });
+    writeFileSync(join(base, "parasite-skill.json"), JSON.stringify({ gc: { ageDays: 30, keep: 20, auto: true, intervalDays: 30 } }));
+    const stale = join(regAgents, "stale-report.json");
+    const seed = () => {
+      writeFileSync(stale, JSON.stringify({ kind: "parasite-skill-agent-run" }));
+      utimesSync(stale, new Date("2020-01-01T00:00:00Z"), new Date("2020-01-01T00:00:00Z"));
+    };
+    seed();
+    const bin = join(process.cwd(), "bin", "parasite-skill.js");
+    const env = { ...process.env, PARASITE_SKILL_HOME: base };
+    // First doctor: the sweep runs, the note lands on stderr, the artifact is
+    // gone, and doctor exits 0 — exactly what the CI release gate asserts.
+    let res = spawnSync(process.execPath, [bin, "doctor"], { cwd: base, env, encoding: "utf8" });
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("auto-gc: pruned");
+    expect(existsSync(stale)).toBe(false);
+    // Inside the 30-day interval: throttled, artifact stays, still exit 0.
+    seed();
+    res = spawnSync(process.execPath, [bin, "doctor"], { cwd: base, env, encoding: "utf8" });
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("auto-gc: skipped");
+    expect(existsSync(stale)).toBe(true);
   });
 });

@@ -60,9 +60,11 @@ export function skillSourceDir() {
   return join(here.pathname.replace(/^\/([A-Za-z]:)/, "$1"), "skill");
 }
 
-export function detectClients() {
+export function detectClients(list = CLIENTS) {
   // A client is detected if its user-level skills dir (or its parent config dir) exists.
-  return CLIENTS.filter((c) => {
+  // The client list is injectable so tests can probe the detection rules against a
+  // synthetic home instead of the machine's real one.
+  return list.filter((c) => {
     if (existsSync(c.user)) return true;
     const parent = c.user.split(/[\\/]/).slice(0, -1).join("/");
     return existsSync(parent);

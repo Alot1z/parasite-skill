@@ -139,8 +139,17 @@ describe("CLIENTS registry", () => {
   });
 
   test("detectClients returns clients whose dir OR parent config dir exists", () => {
-    const detected = detectClients();
-    expect(detected.length).toBeGreaterThan(0);
+    // Hermetic: probe the detection rules against a synthetic home instead of
+    // the machine's real one (which has no client dirs on CI runners).
+    const base = join(tmpdir(), `sr-clients-${Date.now()}`);
+    mkdirSync(join(base, ".agents", "skills"), { recursive: true });
+    mkdirSync(join(base, "cfg"), { recursive: true });
+    const detected = detectClients([
+      { id: "dir", label: "Dir", user: join(base, ".agents", "skills") },
+      { id: "parent", label: "Parent", user: join(base, "cfg", "skills") },
+      { id: "missing", label: "Missing", user: join(base, "nope", "skills") },
+    ]);
+    expect(detected.map((d) => d.id).sort()).toEqual(["dir", "parent"]);
     for (const d of detected) {
       const parent = d.user.split(/[\\/]/).slice(0, -1).join("/");
       expect(existsSync(d.user) || existsSync(parent)).toBe(true);

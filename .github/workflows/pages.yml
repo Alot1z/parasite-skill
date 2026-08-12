@@ -64,6 +64,10 @@ jobs:
           HTML
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Auto-enable GitHub Pages for this repository if it is not already
+          # enabled (the site was failing to build on a fresh repo before this).
+          enablement: true
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
