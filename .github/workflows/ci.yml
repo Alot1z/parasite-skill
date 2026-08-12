@@ -135,6 +135,7 @@ jobs:
           cd "$PARASITE_SKILL_HOME"
           python3 - <<'PY'
           import json, os, sys
+          reg = os.path.join(os.environ["PARASITE_SKILL_HOME"], ".agents", "skills", ".parasite-skill")
           sys.path.insert(0, os.path.join(os.environ["GITHUB_WORKSPACE"], "skill", "scripts"))
           import mcp_server
           # export parity: gc posture block + ledger stats (JS export shape)
