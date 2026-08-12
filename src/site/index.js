@@ -397,13 +397,21 @@ function agentsPages(data) {
     index: false,
   });
   const clientIds = new Set(data.clients.map((c) => c.id));
+  const skillIds = new Set(data.skills.map((s) => s.name));
+  const setIds = new Set(Object.keys(data.sets));
   for (const [name, profile] of Object.entries(data.agents)) {
     const clientLinks = (profile.clients ?? [])
       .map((c) => (clientIds.has(c) ? `<a href="../../clients/${esc(c)}/">${esc(c)}</a>` : esc(c)))
       .join(", ");
+    const skillLinks = (profile.skills ?? [])
+      .map((s) => (skillIds.has(s) ? `<a href="../../skills/${esc(s)}/">${esc(s)}</a>` : esc(s)))
+      .join(", ");
+    const setLinks = (profile.sets ?? [])
+      .map((s) => (setIds.has(s) ? `<a href="../../wiki/skillsets/">${esc(s)}</a>` : esc(s)))
+      .join(", ");
     const kv = [
-      ["Skills", profile.skills?.map((s) => `<a href="../../skills/${esc(s)}/">${esc(s)}</a>`).join(", ") ?? "none"],
-      ["Sets", profile.sets?.map((s) => `<a href="../../wiki/skillsets/">${esc(s)}</a>`).join(", ") ?? "none"],
+      ["Skills", skillLinks || "none"],
+      ["Sets", setLinks || "none"],
       ["Assets", profile.assets?.join(", ") ?? "none"],
       ["Rules", profile.rules?.join(", ") ?? "none"],
       ["MCP tools", profile.mcpTools?.join(", ") ?? "none"],
